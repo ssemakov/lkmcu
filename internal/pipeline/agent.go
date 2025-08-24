@@ -3,9 +3,9 @@ package pipeline
 import (
 	"context"
 	"time"
-	"livekit-mcu/internal/config"
-	"livekit-mcu/internal/layout"
-	"livekit-mcu/internal/logging"
+	"lkmcu/internal/config"
+	"lkmcu/internal/layout"
+	"lkmcu/internal/logging"
 )
 
 type AgentConfig struct {

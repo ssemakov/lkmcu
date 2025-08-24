@@ -1,57 +1,61 @@
 package main
 
 import (
-	"context"
-	"flag"
-	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
+  "context"
+  "flag"
+  "net/http"
+  "os"
+  "os/signal"
+  "syscall"
 
-	"livekit-mcu/internal/config"
-	"livekit-mcu/internal/layout"
-	"livekit-mcu/internal/logging"
-	"livekit-mcu/internal/metrics"
-	"livekit-mcu/internal/pipeline"
+  "github.com/joho/godotenv"
+
+  "lkmcu/internal/config"
+  "lkmcu/internal/layout"
+  "lkmcu/internal/logging"
+  "lkmcu/internal/metrics"
+  "lkmcu/internal/pipeline"
 )
 
 func main() {
-	var (
-		room     = flag.String("room", os.Getenv("LIVEKIT_ROOM"), "LiveKit room to join")
-		identity = flag.String("identity", "mcu-bot", "participant identity")
-		region   = flag.String("region", os.Getenv("MCU_REGION"), "region tag")
-		addr     = flag.String("http", ":8080", "http listen addr")
-	)
-	flag.Parse()
 
-	cfg := config.FromEnv()
-	lg := logging.New(*region, cfg.LogLevel)
+  _ = godotenv.Load()
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+  var (
+  room     = flag.String("room", os.Getenv("LIVEKIT_ROOM"), "LiveKit room to join")
+  identity = flag.String("identity", "mcu-bot", "participant identity")
+  region   = flag.String("region", os.Getenv("MCU_REGION"), "region tag")
+  addr     = flag.String("http", ":8080", "http listen addr")
+  )
+  flag.Parse()
 
-	stage := layout.Default()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200); _, _ = w.Write([]byte("ok")) })
-	mux.Handle("/metrics", metrics.Handler())
-	mux.HandleFunc("/layout", func(w http.ResponseWriter, r *http.Request) { layout.HTTPHandler(&stage, w, r) })
+  cfg := config.FromEnv()
+  lg := logging.New(*region, cfg.LogLevel)
 
-	go func() { _ = http.ListenAndServe(*addr, mux) }()
-	lg.Infof("HTTP listening on %s", *addr)
+  ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+  defer cancel()
 
-	if *room == "" { lg.Fatalf("room is required (--room or LIVEKIT_ROOM)") }
-	lg.Infof("starting MCU agent for room=%s identity=%s", *room, *identity)
+  stage := layout.Default()
+  mux := http.NewServeMux()
+  mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200); _, _ = w.Write([]byte("ok")) })
+  mux.Handle("/metrics", metrics.Handler())
+  mux.HandleFunc("/layout", func(w http.ResponseWriter, r *http.Request) { layout.HTTPHandler(&stage, w, r) })
 
-	agent := pipeline.NewAgent(pipeline.AgentConfig{
-		Room:     *room,
-		Identity: *identity,
-		Layout:   stage,
-		Logger:   lg,
-		Config:   cfg,
-	})
-	if err := agent.Run(ctx); err != nil {
-		lg.Errorf("agent exited: %v", err)
-	}
-	lg.Infof("shutdown complete")
+  go func() { _ = http.ListenAndServe(*addr, mux) }()
+  lg.Infof("HTTP listening on %s", *addr)
+
+  if *room == "" { lg.Fatalf("room is required (--room or LIVEKIT_ROOM)") }
+  lg.Infof("starting MCU agent for room=%s identity=%s", *room, *identity)
+
+  agent := pipeline.NewAgent(pipeline.AgentConfig{
+  Room:     *room,
+  Identity: *identity,
+  Layout:   stage,
+  Logger:   lg,
+  Config:   cfg,
+  })
+  if err := agent.Run(ctx); err != nil {
+  lg.Errorf("agent exited: %v", err)
+  }
+  lg.Infof("shutdown complete")
 }
