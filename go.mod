@@ -1,3 +1,3 @@
-module github.com/example/livekit-mcu
+module github.com/ssemakov/lkmcu
 
-go 1.22
+go 1.25

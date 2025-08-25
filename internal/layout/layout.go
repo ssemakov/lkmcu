@@ -14,7 +14,9 @@ type Rect struct {
 	Z int     `json:"z"`
 }
 
-type Stage struct { Slots []Rect `json:"slots"` }
+type Stage struct {
+	Slots []Rect `json:"slots"`
+}
 
 func Default() Stage {
 	return Stage{Slots: []Rect{

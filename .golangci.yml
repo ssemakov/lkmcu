@@ -1,0 +1,16 @@
+run:
+  timeout: 3m
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - gosimple
+    - unused
+    - structcheck
+    - varcheck
+    - deadcode
+    - ineffassign
+    - typecheck
+    - gofmt
+    - goimports

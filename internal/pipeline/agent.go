@@ -2,10 +2,10 @@ package pipeline
 
 import (
 	"context"
+	"github.com/ssemakov/lkmcu/internal/config"
+	"github.com/ssemakov/lkmcu/internal/layout"
+	"github.com/ssemakov/lkmcu/internal/logging"
 	"time"
-	"livekit-mcu/internal/config"
-	"livekit-mcu/internal/layout"
-	"livekit-mcu/internal/logging"
 )
 
 type AgentConfig struct {

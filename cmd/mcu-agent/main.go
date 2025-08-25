@@ -7,13 +7,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
-	"livekit-mcu/internal/config"
-	"livekit-mcu/internal/layout"
-	"livekit-mcu/internal/logging"
-	"livekit-mcu/internal/metrics"
-	"livekit-mcu/internal/pipeline"
+	"github.com/ssemakov/lkmcu/internal/config"
+	"github.com/ssemakov/lkmcu/internal/layout"
+	"github.com/ssemakov/lkmcu/internal/logging"
+	"github.com/ssemakov/lkmcu/internal/metrics"
+	"github.com/ssemakov/lkmcu/internal/pipeline"
 )
 
 func main() {
@@ -33,14 +32,16 @@ func main() {
 
 	stage := layout.Default()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200); _, _ = w.Write([]byte("ok")) })
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200); _, _ = w.Write([]byte("ok")) })
 	mux.Handle("/metrics", metrics.Handler())
 	mux.HandleFunc("/layout", func(w http.ResponseWriter, r *http.Request) { layout.HTTPHandler(&stage, w, r) })
 
 	go func() { _ = http.ListenAndServe(*addr, mux) }()
 	lg.Infof("HTTP listening on %s", *addr)
 
-	if *room == "" { lg.Fatalf("room is required (--room or LIVEKIT_ROOM)") }
+	if *room == "" {
+		lg.Fatalf("room is required (--room or LIVEKIT_ROOM)")
+	}
 	lg.Infof("starting MCU agent for room=%s identity=%s", *room, *identity)
 
 	agent := pipeline.NewAgent(pipeline.AgentConfig{
