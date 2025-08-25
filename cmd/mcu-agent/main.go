@@ -39,7 +39,9 @@ func main() {
 	go func() { _ = http.ListenAndServe(*addr, mux) }()
 	lg.Infof("HTTP listening on %s", *addr)
 
-	if *room == "" { lg.Fatalf("room is required (--room or LIVEKIT_ROOM)") }
+	if *room == "" {
+		lg.Fatalf("room is required (--room or LIVEKIT_ROOM)")
+	}
 	lg.Infof("starting MCU agent for room=%s identity=%s", *room, *identity)
 
 	agent := pipeline.NewAgent(pipeline.AgentConfig{

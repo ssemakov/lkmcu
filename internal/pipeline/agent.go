@@ -2,10 +2,10 @@ package pipeline
 
 import (
 	"context"
-	"time"
 	"github.com/ssemakov/lkmcu/internal/config"
 	"github.com/ssemakov/lkmcu/internal/layout"
 	"github.com/ssemakov/lkmcu/internal/logging"
+	"time"
 )
 
 type AgentConfig struct {

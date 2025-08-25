@@ -18,4 +18,9 @@ func FromEnv() Config {
 	}
 }
 
-func env(k, def string) string { if v := os.Getenv(k); v != "" { return v }; return def }
+func env(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}
