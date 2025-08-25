@@ -1,6 +1,6 @@
 package media
 
-import "livekit-mcu/internal/layout"
+import "github.com/ssemakov/lkmcu/internal/layout"
 
 type VideoCompositor interface {
 	SetLayout(stage layout.Stage)
