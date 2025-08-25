@@ -16,7 +16,16 @@ jobs:
       - name: Build
         run: make build
       - name: Format check
-        run: test -z "$(gofmt -l .)"
+        run: |
+          set -euo pipefail
+          files="$(gofmt -l -s .)"
+          if [ -n "$files" ]; then
+            echo "These files are not gofmt'ed:"
+            echo "$files"
+            echo
+            echo "Run: gofmt -s -w ."
+            exit 1
+          fi
       - name: Unit tests
         run: make test
       - name: Docker build
