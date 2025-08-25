@@ -3,9 +3,9 @@ package pipeline
 import (
 	"context"
 	"time"
-	"lkmcu/internal/config"
-	"lkmcu/internal/layout"
-	"lkmcu/internal/logging"
+	"github.com/ssemakov/lkmcu/internal/config"
+	"github.com/ssemakov/lkmcu/internal/layout"
+	"github.com/ssemakov/lkmcu/internal/logging"
 )
 
 type AgentConfig struct {
