@@ -29,7 +29,7 @@ func main() {
 
 	lg := logging.New(cfg.Region, cfg.LogLevel)
 
-	if cfg.Room== "" {
+	if cfg.Room == "" {
 		lg.Fatalf("room is required (--room or LIVEKIT_ROOM)")
 	}
 
@@ -48,9 +48,9 @@ func main() {
 	lg.Infof("starting MCU agent for room=%s identity=%s", cfg.Room, cfg.Identity)
 
 	agent := pipeline.NewAgent(pipeline.AgentConfig{
-		Layout:   stage,
-		Logger:   lg,
-		Config:   cfg,
+		Layout: stage,
+		Logger: lg,
+		Config: cfg,
 	})
 	if err := agent.Run(ctx); err != nil {
 		lg.Errorf("agent exited: %v", err)

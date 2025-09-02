@@ -12,9 +12,9 @@ import (
 type AgentConfig struct {
 	// Room     string
 	// Identity string
-	Layout   layout.Stage
-	Logger   *logging.Logger
-	Config   config.Config
+	Layout layout.Stage
+	Logger *logging.Logger
+	Config config.Config
 }
 
 type Agent struct{ cfg AgentConfig }

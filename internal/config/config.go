@@ -30,25 +30,25 @@ func FromEnv() Config {
 }
 
 func FromFlags() Config {
-		var (
-		room      = flag.String("room", "", "LiveKit room to join")
-		apiKey    = flag.String("key", "", "LiveKit API key")
-		apiSecret = flag.String("secret", "", "LiveKit API secret")
-		identity  = flag.String("identity", "", "participant identity")
-		region    = flag.String("region", "", "region tag")
-		addr      = flag.String("http", "", "http listen addr")
+	var (
+		room       = flag.String("room", "", "LiveKit room to join")
+		apiKey     = flag.String("key", "", "LiveKit API key")
+		apiSecret  = flag.String("secret", "", "LiveKit API secret")
+		identity   = flag.String("identity", "", "participant identity")
+		region     = flag.String("region", "", "region tag")
+		addr       = flag.String("http", "", "http listen addr")
 		liveKitUrl = flag.String("url", "", "LiveKit server url")
 	)
 	flag.Parse()
 
 	return Config{
 		LivekitURL: *liveKitUrl,
-		Room: *room,
-		APIKey: *apiKey,
-		APISecret: *apiSecret,
-		Identity: *identity,
-		Region: *region,
-		Addr: *addr,
+		Room:       *room,
+		APIKey:     *apiKey,
+		APISecret:  *apiSecret,
+		Identity:   *identity,
+		Region:     *region,
+		Addr:       *addr,
 	}
 
 }

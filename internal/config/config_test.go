@@ -43,15 +43,15 @@ func TestFromFlags(t *testing.T) {
 	// Save original os.Args and restore after test
 	origArgs := os.Args
 	defer func() { os.Args = origArgs }()
-	
+
 	// Set test arguments
 	os.Args = []string{"cmd", "-room=test-room", "-key=test-key", "-url=ws://test:7880"}
-	
+
 	// Reset flag package for clean test
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	
+
 	got := FromFlags()
-	
+
 	if got.Room != "test-room" {
 		t.Errorf("want Room=test-room, got %q", got.Room)
 	}
@@ -72,9 +72,9 @@ func TestFromEnv(t *testing.T) {
 	t.Setenv("MCU_IDENTITY", "env-identity")
 	t.Setenv("MCU_REGION", "env-region")
 	t.Setenv("MCU_HTTP_ADDR", ":8080")
-	
+
 	got := FromEnv()
-	
+
 	if got.LivekitURL != "ws://env:7880" {
 		t.Errorf("want LivekitURL=ws://env:7880, got %q", got.LivekitURL)
 	}
@@ -103,26 +103,26 @@ func TestFromEnv(t *testing.T) {
 
 func TestResolve_AllFields(t *testing.T) {
 	flags := Config{
-		Room: "flag-room",
+		Room:   "flag-room",
 		APIKey: "flag-key",
 	}
 	env := Config{
-		Room: "env-room",
-		APIKey: "env-key", 
+		Room:      "env-room",
+		APIKey:    "env-key",
 		APISecret: "env-secret",
-		LogLevel: "debug",
+		LogLevel:  "debug",
 	}
 	defaults := Config{
-		Room: "default-room",
-		APIKey: "default-key",
-		APISecret: "default-secret", 
-		LogLevel: "info",
+		Room:       "default-room",
+		APIKey:     "default-key",
+		APISecret:  "default-secret",
+		LogLevel:   "info",
 		LivekitURL: "ws://localhost:7880",
-		Identity: "default-identity",
+		Identity:   "default-identity",
 	}
-	
+
 	got := Resolve(flags, env, defaults)
-	
+
 	// Flag values should override
 	if got.Room != "flag-room" {
 		t.Errorf("want Room=flag-room, got %q", got.Room)
@@ -130,7 +130,7 @@ func TestResolve_AllFields(t *testing.T) {
 	if got.APIKey != "flag-key" {
 		t.Errorf("want APIKey=flag-key, got %q", got.APIKey)
 	}
-	
+
 	// Env should override defaults where flags are empty
 	if got.APISecret != "env-secret" {
 		t.Errorf("want APISecret=env-secret, got %q", got.APISecret)
@@ -138,7 +138,7 @@ func TestResolve_AllFields(t *testing.T) {
 	if got.LogLevel != "debug" {
 		t.Errorf("want LogLevel=debug, got %q", got.LogLevel)
 	}
-	
+
 	// Defaults should be used where both flag and env are empty
 	if got.LivekitURL != "ws://localhost:7880" {
 		t.Errorf("want LivekitURL=ws://localhost:7880, got %q", got.LivekitURL)
