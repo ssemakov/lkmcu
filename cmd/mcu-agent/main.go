@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"flag"
 	"net/http"
-	"os"
 	"os/signal"
 	"syscall"
 
@@ -16,16 +14,24 @@ import (
 )
 
 func main() {
-	var (
-		room     = flag.String("room", os.Getenv("LIVEKIT_ROOM"), "LiveKit room to join")
-		identity = flag.String("identity", "mcu-bot", "participant identity")
-		region   = flag.String("region", os.Getenv("MCU_REGION"), "region tag")
-		addr     = flag.String("http", ":8080", "http listen addr")
+	cfg := config.Resolve(
+		config.FromFlags(),
+		config.FromEnv(),
+		config.Config{ // defaults
+			LivekitURL: "ws://localhost:7880",
+			APIKey:     "devkey",
+			APISecret:  "secret",
+			LogLevel:   "info",
+			Identity:   "mcu-bot",
+			Addr:       ":8080",
+		},
 	)
-	flag.Parse()
 
-	cfg := config.FromEnv()
-	lg := logging.New(*region, cfg.LogLevel)
+	lg := logging.New(cfg.Region, cfg.LogLevel)
+
+	if cfg.Room == "" {
+		lg.Fatalf("room is required (--room or LIVEKIT_ROOM)")
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -36,20 +42,15 @@ func main() {
 	mux.Handle("/metrics", metrics.Handler())
 	mux.HandleFunc("/layout", func(w http.ResponseWriter, r *http.Request) { layout.HTTPHandler(&stage, w, r) })
 
-	go func() { _ = http.ListenAndServe(*addr, mux) }()
-	lg.Infof("HTTP listening on %s", *addr)
+	go func() { _ = http.ListenAndServe(cfg.Addr, mux) }()
+	lg.Infof("HTTP listening on %s", cfg.Addr)
 
-	if *room == "" {
-		lg.Fatalf("room is required (--room or LIVEKIT_ROOM)")
-	}
-	lg.Infof("starting MCU agent for room=%s identity=%s", *room, *identity)
+	lg.Infof("starting MCU agent for room=%s identity=%s", cfg.Room, cfg.Identity)
 
 	agent := pipeline.NewAgent(pipeline.AgentConfig{
-		Room:     *room,
-		Identity: *identity,
-		Layout:   stage,
-		Logger:   lg,
-		Config:   cfg,
+		Layout: stage,
+		Logger: lg,
+		Config: cfg,
 	})
 	if err := agent.Run(ctx); err != nil {
 		lg.Errorf("agent exited: %v", err)
