@@ -3,21 +3,21 @@ BIN := bin/mcu-agent
 .PHONY: build run clean fmt test
 
 build:
-  mkdir -p bin
-  GO111MODULE=on go build -o $(BIN) ./cmd/mcu-agent
+	mkdir -p bin
+	GO111MODULE=on go build -o $(BIN) ./cmd/mcu-agent
 
 run: build
-  $(BIN)
+	$(BIN)
 
 clean:
-  rm -rf bin
+	rm -rf bin
 
 fmt:
-  gofmt -s -w .
+	gofmt -s -w .
 
 test:
-  go test ./...
+	go test ./...
 
 lint:
-  golangci-lint run --timeout 5m ./...
+	golangci-lint run --timeout 5m ./...
 
