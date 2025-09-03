@@ -33,9 +33,6 @@ func main() {
 		lg.Fatalf("room is required (--room or LIVEKIT_ROOM)")
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
 	stage := layout.Default()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200); _, _ = w.Write([]byte("ok")) })
@@ -52,6 +49,10 @@ func main() {
 		Logger: lg,
 		Config: cfg,
 	})
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
 	if err := agent.Run(ctx); err != nil {
 		lg.Errorf("agent exited: %v", err)
 	}

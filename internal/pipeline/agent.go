@@ -10,8 +10,6 @@ import (
 )
 
 type AgentConfig struct {
-	// Room     string
-	// Identity string
 	Layout layout.Stage
 	Logger *logging.Logger
 	Config config.Config
@@ -29,3 +27,4 @@ func (a *Agent) Run(ctx context.Context) error {
 	time.Sleep(50 * time.Millisecond)
 	return ctx.Err()
 }
+
