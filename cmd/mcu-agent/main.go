@@ -22,7 +22,6 @@ func main() {
 			APIKey:     "devkey",
 			APISecret:  "secret",
 			LogLevel:   "info",
-			Identity:   "mcu-bot",
 			Addr:       ":8080",
 		},
 	)

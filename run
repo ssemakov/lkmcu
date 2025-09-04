@@ -1,4 +1,8 @@
 #!/bin/sh
 
-docker run --rm -p 8080:8080 --env-file .env mcu-agent
+if [ -f .env ]; then
+  . .env
+fi
+
+bin/mcu-agent --room "$LIVEKIT_ROOM" --key "$LIVEKIT_API_KEY" --secret "$LIVEKIT_API_SECRET" --url "$LIVEKIT_URL" --region "$MCU_REGION"
 

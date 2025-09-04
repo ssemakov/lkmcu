@@ -1,8 +1,12 @@
 package config
 
 import (
+	"crypto/rand"
 	"flag"
 	"os"
+	"time"
+
+	"github.com/oklog/ulid/v2"
 )
 
 type Config struct {
@@ -61,7 +65,7 @@ func Resolve(flags Config, env Config, defaults Config) Config {
 		APISecret:  firstNonEmpty(flags.APISecret, env.APISecret, defaults.APISecret),
 		LogLevel:   firstNonEmpty(flags.LogLevel, env.LogLevel, defaults.LogLevel),
 		Room:       firstNonEmpty(flags.Room, env.Room, defaults.Room),
-		Identity:   firstNonEmpty(flags.Identity, env.Identity, defaults.Identity),
+		Identity:   firstNonEmpty(flags.Identity, env.Identity, defaults.Identity, "Ex_"+NewID(12)),
 		Region:     firstNonEmpty(flags.Region, env.Region, defaults.Region),
 		Addr:       firstNonEmpty(flags.Addr, env.Addr, defaults.Addr),
 	}
@@ -73,4 +77,21 @@ func env(k, def string) string {
 		return v
 	}
 	return def
+}
+
+const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+func NewID(n int) string {
+	t := time.Now()
+	entropy := ulid.Monotonic(rand.Reader, 0)
+
+	id := ulid.MustNew(ulid.Timestamp(t), entropy)
+	data := id.Bytes()
+
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = alphabet[int(data[i])%len(alphabet)]
+	}
+
+	return string(out)
 }
