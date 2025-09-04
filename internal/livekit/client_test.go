@@ -55,8 +55,8 @@ func TestClient_Close_WithoutRoom(t *testing.T) {
 	client := NewClient("ws://localhost:7880", "key", "secret")
 
 	err := client.Close()
-	if err != nil {
-		t.Errorf("Close() returned error: %v", err)
+	if err == nil {
+		t.Error("expected error when closing without a room, got nil")
 	}
 }
 
@@ -99,3 +99,4 @@ type mockRoom struct {
 func (m *mockRoom) Disconnect() {
 	m.disconnectCalled = true
 }
+

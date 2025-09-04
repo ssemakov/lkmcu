@@ -1,6 +1,8 @@
 package livekit
 
 import (
+	"errors"
+
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/pion/webrtc/v4"
 )
@@ -46,8 +48,9 @@ func (c *Client) JoinRoom(roomName, identity string) error {
 func (c *Client) Close() error {
 	if c.room != nil {
 		c.room.Disconnect()
+		return nil
 	}
-	return nil
+	return errors.New("room is not connected")
 }
 
 func trackSubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {

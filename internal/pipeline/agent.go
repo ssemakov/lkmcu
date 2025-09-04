@@ -28,12 +28,18 @@ func (a *Agent) Run(ctx context.Context) error {
 	lkClient := lk.NewClient(a.cfg.Config.LivekitURL, a.cfg.Config.APIKey, a.cfg.Config.APISecret)
 	if err := lkClient.JoinRoom(a.cfg.Config.Room, a.cfg.Config.Identity); err != nil {
 		lg.Errorf("could not join room: %v", err)
+	} else {
+		lg.Infof("joined room %s as %s", a.cfg.Config.Room, a.cfg.Config.Identity)
 	}
 
-	defer lkClient.Close()
-	lg.Infof("joined room %s as %s", a.cfg.Config.Room, a.cfg.Config.Identity)
+	defer func() {
+		if err := lkClient.Close(); err != nil {
+			lg.Errorf("error closing LiveKit client: %v", err)
+		}
+	}()
 
 	<-ctx.Done()
+
 	lg.Infof("agent stopping...")
 	time.Sleep(50 * time.Millisecond)
 	return ctx.Err()
