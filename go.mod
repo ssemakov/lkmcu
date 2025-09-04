@@ -3,6 +3,12 @@ module github.com/ssemakov/lkmcu
 go 1.25
 
 require (
+	github.com/livekit/server-sdk-go/v2 v2.11.2
+	github.com/oklog/ulid/v2 v2.1.1
+	github.com/pion/webrtc/v4 v4.1.5-0.20250828044558-c376d0edf977
+)
+
+require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.8-20250717185734-6c6e0d3c608e.1 // indirect
 	buf.build/go/protovalidate v0.14.0 // indirect
 	buf.build/go/protoyaml v0.6.0 // indirect
@@ -30,7 +36,6 @@ require (
 	github.com/livekit/mediatransportutil v0.0.0-20250519131108-fb90f5acfded // indirect
 	github.com/livekit/protocol v1.40.1-0.20250826073447-c714707269e5 // indirect
 	github.com/livekit/psrpc v0.6.1-0.20250726180611-3915e005e741 // indirect
-	github.com/livekit/server-sdk-go/v2 v2.11.2 // indirect
 	github.com/magefile/mage v1.15.0 // indirect
 	github.com/nats-io/nats.go v1.45.0 // indirect
 	github.com/nats-io/nkeys v0.4.11 // indirect
@@ -50,7 +55,6 @@ require (
 	github.com/pion/stun/v3 v3.0.0 // indirect
 	github.com/pion/transport/v3 v3.0.7 // indirect
 	github.com/pion/turn/v4 v4.1.1 // indirect
-	github.com/pion/webrtc/v4 v4.1.5-0.20250828044558-c376d0edf977 // indirect
 	github.com/puzpuzpuz/xsync/v3 v3.5.1 // indirect
 	github.com/redis/go-redis/v9 v9.12.1 // indirect
 	github.com/stoewer/go-strcase v1.3.1 // indirect
