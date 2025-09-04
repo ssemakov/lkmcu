@@ -22,7 +22,6 @@ func main() {
 			APIKey:     "devkey",
 			APISecret:  "secret",
 			LogLevel:   "info",
-			Identity:   "mcu-bot",
 			Addr:       ":8080",
 		},
 	)
@@ -32,9 +31,6 @@ func main() {
 	if cfg.Room == "" {
 		lg.Fatalf("room is required (--room or LIVEKIT_ROOM)")
 	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 
 	stage := layout.Default()
 	mux := http.NewServeMux()
@@ -52,6 +48,10 @@ func main() {
 		Logger: lg,
 		Config: cfg,
 	})
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
 	if err := agent.Run(ctx); err != nil {
 		lg.Errorf("agent exited: %v", err)
 	}
