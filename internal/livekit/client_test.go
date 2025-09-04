@@ -99,4 +99,3 @@ type mockRoom struct {
 func (m *mockRoom) Disconnect() {
 	m.disconnectCalled = true
 }
-
