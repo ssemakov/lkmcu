@@ -35,7 +35,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	lg.Infof("connecting to LiveKit at %s", a.cfg.Config.LivekitURL)
 
 	// Join the livekit room
-	a.lk = lk.NewClient(a.cfg.Config.LivekitURL, a.cfg.Config.APIKey, a.cfg.Config.APISecret)
+	a.lk = lk.NewClient(a.cfg.Config.LivekitURL, a.cfg.Config.APIKey, a.cfg.Config.APISecret, nil)
 	if err := a.lk.JoinRoom(a.cfg.Config.Room, a.cfg.Config.Identity); err != nil {
 		lg.Errorf("could not join room: %v", err)
 	} else {
@@ -88,9 +88,11 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
 			lg.Debugf("stopping LiveKit event consumer")
 			return
 		case e := <-a.lk.Events():
-			switch e.Type {
-				case ...
-				a.evCh <- Event{Type: EventType(e.Type)}
+			switch e {
+				case lk.ParticipantJoined{}, lk.ParticipantLeft{}:
+					lg.Infof("received LiveKit event: %v", e)
+					a.evCh <- Event{Type: "LKEVent"}
+				}
 		default:
 			// ev, err := a.lk.NextEvent(ctx)
 			// lg.Infof("received LiveKit event: %v", ev)

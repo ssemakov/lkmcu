@@ -2,6 +2,7 @@ package livekit
 
 import (
 	"errors"
+	"sync"
 
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/pion/webrtc/v4"
@@ -16,16 +17,44 @@ type Client struct {
 	apiSecret string
 	url       string
 	room      Room
+
+	evCh chan Event
+	mu sync.RWMutex
 }
 
-func NewClient(url, apiKey, apiSecret string) *Client {
-	return &Client{url: url, apiKey: apiKey, apiSecret: apiSecret}
+type EventOptions struct {
+	BufferSize int // size of the internal event channel buffer
+	DropPolicy DropPolicy
+}
+// Defines how the client should behave when the event buffer (evCh) is full
+type DropPolicy int
+
+const (
+	DropNewest DropPolicy = iota // drop oldest event when buffer is full
+	DropOldest                   // drop newest event when buffer is full
+	Block                        // block until there is space in the buffer
+)
+
+func NewClient(url, apiKey, apiSecret string, opts *EventOptions) *Client {
+	if opts == nil {
+		opts = &EventOptions{ BufferSize: 64, DropPolicy: DropNewest }
+	}
+	return &Client{url: url, apiKey: apiKey, apiSecret: apiSecret, evCh: make(chan Event, opts.BufferSize) }
 }
 
 func (c *Client) JoinRoom(roomName, identity string) error {
 	roomCB := &lksdk.RoomCallback{
+		OnParticipantConnected: c.onParticipantJoined,
+		OnParticipantDisconnected: c.onParticipantLeft,
+		OnDisconnected: func() { c.onRoomDisconnected(lksdk.OtherReason) },
+		OnDisconnectedWithReason: c.onRoomDisconnected,
+		OnReconnected: c.onRoomReconnected,
+
 		ParticipantCallback: lksdk.ParticipantCallback{
-			OnTrackSubscribed: trackSubscribed,
+			OnTrackPublished:  c.onTrackPublished,
+			OnTrackUnpublished: c.onTrackUnpublished,
+			OnTrackSubscribed: c.onTrackSubscribed,
+			OnTrackUnsubscribed: c.onTrackUnsubscribed,
 		},
 	}
 
@@ -46,6 +75,8 @@ func (c *Client) JoinRoom(roomName, identity string) error {
 }
 
 func (c *Client) Close() error {
+	close(c.evCh)
+
 	if c.room != nil {
 		c.room.Disconnect()
 		return nil
@@ -53,6 +84,57 @@ func (c *Client) Close() error {
 	return errors.New("room is not connected")
 }
 
-func trackSubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
-	// TODO: implement
+/// LiveKit events normalization and handling
+
+func (c *Client) Events() <-chan Event {
+	return c.evCh
 }
+
+func (c *Client) onParticipantJoined(p *lksdk.RemoteParticipant) {
+	evt := ParticipantJoined{ PID: p.SID(), Identity: p.Identity() }
+	c.push(evt)
+}
+
+func (c *Client) onParticipantLeft(p *lksdk.RemoteParticipant) {
+	evt := ParticipantLeft{ PID: p.SID() }
+	c.push(evt)
+}
+
+func (c *Client) onTrackPublished(pub *lksdk.RemoteTrackPublication, p *lksdk.RemoteParticipant) {
+	/// ToDo normalize track kind
+	evt := TrackPublished{ PID: p.SID(), TID: pub.SID(), Kind: pub.Kind().String() }
+	c.push(evt)
+}
+
+func (c *Client) onTrackUnpublished(pub *lksdk.RemoteTrackPublication, p *lksdk.RemoteParticipant) {
+	evt := TrackUnpublished{ PID: p.SID(), TID: pub.SID() }
+	c.push(evt)
+}
+
+func (c *Client) onRoomDisconnected(reason lksdk.DisconnectionReason) {
+	c.push(RoomDisconnected{Reason: string(reason)})
+}
+
+func (c *Client) onRoomReconnected() {
+	c.push(RoomReconnected{})
+}
+
+func (c *Client) push(evt Event) {
+	select {
+	case c.evCh <- evt:
+		return
+	default:
+		// channel is full, apply drop policy
+		// For simplicity, we will just drop the new event (DropNewest)
+		// Implement other policies as needed
+	}
+}
+
+func (c *Client) onTrackSubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
+	c.push(TrackSubscribed{ PID: rp.SID(), TID: pub.SID(), Kind: pub.Kind().String(), Track: track })
+}
+
+func (c *Client) onTrackUnsubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
+	c.push(TrackUnsubscribed{ PID: rp.SID(), TID: pub.SID(), Kind: pub.Kind().String(), Track: track })
+}
+
