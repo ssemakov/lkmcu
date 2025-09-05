@@ -18,6 +18,8 @@ type Config struct {
 	Identity   string
 	Region     string
 	Addr       string
+	IncludeKind string
+	ExcludeKind string
 }
 
 func FromEnv() Config {
@@ -30,6 +32,8 @@ func FromEnv() Config {
 		Identity:   env("MCU_IDENTITY", ""),
 		Region:     env("MCU_REGION", ""),
 		Addr:       env("MCU_HTTP_ADDR", ""),
+		IncludeKind: env("MCU_INCLUDE_KIND", ""),
+		ExcludeKind: env("MCU_EXCLUDE_KIND", ""),
 	}
 }
 
@@ -42,6 +46,9 @@ func FromFlags() Config {
 		region     = flag.String("region", "", "region tag")
 		addr       = flag.String("http", "", "http listen addr")
 		liveKitUrl = flag.String("url", "", "LiveKit server url")
+		logLevel   = flag.String("log-level", "", "log level, options: debug, info (default), error")
+		includeKind = flag.String("include-kind", "", "comma-separated list of track kinds to include (empty = all), options: audio, video, screen")
+		excludeKind = flag.String("exclude-kind", "", "comma-separated list of track kinds to exclude, options: audio, video, screen")
 	)
 	flag.Parse()
 
@@ -53,6 +60,9 @@ func FromFlags() Config {
 		Identity:   *identity,
 		Region:     *region,
 		Addr:       *addr,
+		LogLevel:   *logLevel,
+		IncludeKind: *includeKind,
+		ExcludeKind: *excludeKind,
 	}
 
 }
