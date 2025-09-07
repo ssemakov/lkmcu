@@ -19,6 +19,7 @@ type Client struct {
 	room      Room
 
 	evCh chan Event
+	dropPolicy DropPolicy
 	mu sync.RWMutex
 }
 
@@ -30,16 +31,16 @@ type EventOptions struct {
 type DropPolicy int
 
 const (
-	DropNewest DropPolicy = iota // drop oldest event when buffer is full
-	DropOldest                   // drop newest event when buffer is full
+	DropOldest DropPolicy = iota // drop oldest event when buffer is full
 	Block                        // block until there is space in the buffer
 )
 
 func NewClient(url, apiKey, apiSecret string, opts *EventOptions) *Client {
 	if opts == nil {
-		opts = &EventOptions{ BufferSize: 64, DropPolicy: DropNewest }
+		opts = &EventOptions{ BufferSize: 64, DropPolicy: DropOldest }
 	}
-	return &Client{url: url, apiKey: apiKey, apiSecret: apiSecret, evCh: make(chan Event, opts.BufferSize) }
+	return &Client{url: url, apiKey: apiKey, apiSecret: apiSecret, evCh: make(chan Event, opts.BufferSize),
+		dropPolicy: opts.DropPolicy }
 }
 
 func (c *Client) JoinRoom(roomName, identity string) error {
@@ -124,9 +125,13 @@ func (c *Client) push(evt Event) {
 	case c.evCh <- evt:
 		return
 	default:
-		// channel is full, apply drop policy
-		// For simplicity, we will just drop the new event (DropNewest)
-		// Implement other policies as needed
+		switch c.dropPolicy  {
+		case DropOldest:
+			<-c.evCh
+			c.evCh <- evt
+		case Block:
+			c.evCh <- evt
+		}
 	}
 }
 
