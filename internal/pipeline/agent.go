@@ -65,7 +65,6 @@ func (a *Agent) Run(ctx context.Context) error {
 			return ctx.Err()
 
 		case <-a.tick.C:
-			lg.Debugf("tick: reconciling state")
 			a.reconcileState(ctx)
 
 		case ev := <-a.evCh:
@@ -88,10 +87,12 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
 			lg.Debugf("stopping LiveKit event consumer")
 			return
 		case e := <-a.lk.Events():
-			switch e {
-				case lk.ParticipantJoined{}, lk.ParticipantLeft{}:
-					lg.Infof("received LiveKit event: %v", e)
+			switch e.(type) {
+				case lk.ParticipantJoined, lk.ParticipantLeft:
+					lg.Infof("received LiveKit event: %s", logging.FormatValue(e))
 					a.evCh <- Event{Type: "LKEVent"}
+				default:
+					lg.Debugf("ignoring LiveKit event: %s", logging.FormatValue(e))
 				}
 		default:
 			// ev, err := a.lk.NextEvent(ctx)
@@ -116,6 +117,7 @@ func (a *Agent) applyEvent(ev Event) {
 }
 
 func (a *Agent) reconcileState(ctx context.Context) {
-	a.cfg.Logger.Debugf("reconciling state...")
+	// a.cfg.Logger.Debugf("reconciling state...")
 	// TODO
 }
+
