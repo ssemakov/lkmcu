@@ -20,7 +20,9 @@ type Agent struct{
 	lk *lk.Client
 
 	// policy Policy // tracks subscription policy
-	stageTracks map[string]bool // track ID -> onStage
+	// stageTracks map[string]bool // track ID -> onStage
+
+	layoutView *layout.LayoutView // current layout view
 	roomSnap *RoomSnapshot // current room state
 
 	evCh chan SystemEvent // internal events
@@ -35,7 +37,7 @@ func NewAgent(cfg AgentConfig) *Agent {
 			CurrentSubs: make(map[string]DecisionAction),
 			Version: 0,
 		},
-		stageTracks: make(map[string]bool),
+		layoutView: &layout.LayoutView{ OnStage: make(map[string]bool) },
 	}
 }
 
@@ -136,7 +138,7 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
 				case lk.TrackSubscribed:
 					ev := e.(lk.TrackSubscribed)
 					lg.Infof("TrackSubscribed: %s track %s kind %s", ev.Identity, ev.TID, ev.Kind)
-					a.onStageTracks[ev.TID] = true // assume subscribed tracks are on stage
+					// a.onStageTracks[ev.TID] = true // assume subscribed tracks are on stage
 				default:
 					lg.Debugf("ignoring LiveKit event: %s", logging.FormatValue(e))
 				}
@@ -155,27 +157,17 @@ func (a *Agent) applyEvent(ev SystemEvent) {
 		for _, lkEv := range e.LkEvents {
 			switch ev2 := lkEv.(type) {
 			case lk.ParticipantJoined:
-				a.roomSnap.Participants[ev2.PID] = &ParticipantInfo{ ID: ev2.PID, Identity: ev2.Identity }
+				a.roomSnap.UpsertParticipant(ev2.PID, ev2.Identity)
 			case lk.ParticipantLeft:
-				delete(a.roomSnap.Participants, ev2.PID)
+				a.roomSnap.DeleteParticipant(ev2.PID)
 			case lk.TrackPublished:
-				p, ok := a.roomSnap.Participants[ev2.PID]
-				if !ok {
-					a.cfg.Logger.Errorf("TrackPublished for unknown participant %s", ev2.PID)
+				_, err := a.roomSnap.UpsertTrack(ev2.PID, ev2.TID, TrackKind(ev2.Kind))
+				if err != nil {
+					a.cfg.Logger.Errorf("TrackPublished error: %v", err)
 					continue
 				}
-				t := &TrackInfo{ ID: ev2.TID, Kind: TrackKind(ev2.Kind), PID: ev2.PID }
-				if p.PublishedTracks == nil {
-					p.PublishedTracks = make(map[string]*TrackInfo)
-				}
-				p.PublishedTracks[ev2.TID] = t
 			case lk.TrackUnpublished:
-				p, ok := a.roomSnap.Participants[ev2.PID]
-				if !ok {
-					a.cfg.Logger.Errorf("TrackUnpublished for unknown participant %s", ev2.PID)
-					continue
-				}
-				delete(p.PublishedTracks, ev2.TID)
+				a.roomSnap.DeleteTrack(ev2.PID, ev2.TID)
 			default:
 				a.cfg.Logger.Debugf("ignoring LiveKit event in RoomChangedEvent: %s", logging.FormatValue(ev2))
 			}
@@ -189,8 +181,7 @@ func (a *Agent) reconcileState(ctx context.Context) {
 	// Decide changes based on the current layout and policy
 	a.cfg.Logger.Debugf("Reconciling state. Room snapshot: %v", logging.FormatValue(a.roomSnap))
 
-	lv := layout.LayoutView{ OnStage: a.stageTracks }
-	decs := Decide(Policy{}, lv, a.roomSnap)
+	decs := Decide(&Policy{}, a.layoutView, a.roomSnap)
 
 	// Compare with current subscriptions (ask client or track locally)
 	cur := a.lk.SubscriptionSnapshot()

@@ -5,6 +5,13 @@ import (
 	"strings"
 )
 
+type TrackKind string
+const (
+	TrackAudio      TrackKind = "audio"
+	TrackVideo      TrackKind = "video"
+	TrackScreenShare TrackKind = "screenshare"
+)
+
 // Describes a track in the room
 type TrackInfo struct {
 	ID   string
@@ -53,4 +60,47 @@ func (rs *RoomSnapshot) Format() string {
 		participants = append(participants, fmt.Sprintf("%s:%s", pid, p.Format()))
 	}
 	return fmt.Sprintf("RoomSnapshot{Participants:{%s} CurrentSubs:%+v Version:%d}", strings.Join(participants, " "), rs.CurrentSubs, rs.Version)
+}
+
+func (rs *RoomSnapshot) UpsertParticipant(PID string, Identity string) *ParticipantInfo {
+	if p, ok := rs.Participants[PID]; ok {
+		p.Identity = Identity
+		return p
+	} else {
+		p := &ParticipantInfo{ ID: PID, Identity: Identity }
+		rs.Participants[PID] = p
+		return p
+	}
+}
+
+func (rs *RoomSnapshot) DeleteParticipant(PID string) {
+	delete(rs.Participants, PID)
+}
+
+func (rs *RoomSnapshot) UpsertTrack(PID string, TID string, Kind TrackKind) (*TrackInfo, error) {
+	p, ok := rs.Participants[PID]
+	if !ok {
+		return nil, fmt.Errorf("UpsertTrack for unknown participant %s", PID)
+	}
+
+	if t, ok := p.PublishedTracks[TID]; ok {
+		t.Kind = Kind
+		return t, nil
+	} else {
+		t := &TrackInfo{ ID: TID, Kind: Kind, PID: PID }
+		if p.PublishedTracks == nil {
+			p.PublishedTracks = make(map[string]*TrackInfo)
+		}
+		p.PublishedTracks[TID] = t
+		return t, nil
+	}
+}
+
+func (rs *RoomSnapshot) DeleteTrack(PID string, TID string) error {
+	p, ok := rs.Participants[PID]
+	if !ok {
+		return fmt.Errorf("DeleteTrack for unknown participant %s", PID)
+	}
+	delete(p.PublishedTracks, TID)
+	return nil
 }

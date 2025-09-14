@@ -21,10 +21,14 @@ type Decision struct {
 
 type Operations interface { isOperation() }
 
-func Decide(policy Policy, layout layout.LayoutView, snapshot *RoomSnapshot) []Decision {
+func Decide(policy *Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []Decision {
 	/// Basic decision logic:
 	// 1. Excluded? - don't subscribe
 	// 2. Included and on stage? - subscribe full
+
+	// for layout.OnStage {id, onStage := range layout.OnStage {
+	// }
+
 	return []Decision{}
 }
 
