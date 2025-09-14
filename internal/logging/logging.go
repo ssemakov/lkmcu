@@ -26,6 +26,18 @@ func FormatValue[T any](v T) string {
 		return formatter.Format()
 	}
 
-	typeName := reflect.TypeOf(v).Name()
-	return fmt.Sprintf("%s{%+v}", typeName, v)
+	val := reflect.ValueOf(v)
+	typ := reflect.TypeOf(v)
+
+	if typ.Kind() == reflect.Ptr {
+		if val.IsNil() {
+			// To get the type name from a nil pointer, we need to use Elem() on the type
+			return fmt.Sprintf("%s{<nil>}", typ.Elem().Name())
+		}
+		val = val.Elem()
+		typ = typ.Elem()
+	}
+
+	typeName := typ.Name()
+	return fmt.Sprintf("%s{%+v}", typeName, val.Interface())
 }
