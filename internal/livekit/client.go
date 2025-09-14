@@ -6,7 +6,6 @@ import (
 
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/pion/webrtc/v4"
-	"github.com/ssemakov/lkmcu/internal/logging"
 )
 
 type Room interface {
@@ -127,8 +126,7 @@ func (c *Client) onParticipantLeft(p *lksdk.RemoteParticipant) {
 
 func (c *Client) onTrackPublished(pub *lksdk.RemoteTrackPublication, p *lksdk.RemoteParticipant) {
 	/// ToDo normalize track kind
-	evt := TrackPublished{ PID: p.SID(), Identity: p.Identity(), TID: pub.SID(), Kind: pub.Kind().String(),
-		trackPub: logging.FormatValue(pub), participant: logging.FormatValue(p) }
+	evt := TrackPublished{ PID: p.SID(), Identity: p.Identity(), TID: pub.SID(), Kind: pub.Kind().String()}
 	c.push(evt)
 }
 

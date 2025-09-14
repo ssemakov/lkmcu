@@ -6,7 +6,7 @@ type Event interface { isLiveKitEvent() }
 type (
 	ParticipantJoined 	struct{ PID, Identity string }
 	ParticipantLeft   	struct{ PID, Identity string }
-	TrackPublished   	struct{ PID, Identity, TID, Kind, trackPub, participant string }
+	TrackPublished   	struct{ PID, Identity, TID, Kind string }
 	TrackUnpublished 	struct{ PID, Identity, TID string }
 	TrackSubscribed   	struct{ PID, Identity, TID, Kind string; Track interface{} }
 	TrackUnsubscribed 	struct{ PID, Identity, TID, Kind string; Track interface{} }
