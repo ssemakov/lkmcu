@@ -20,14 +20,24 @@ type Agent struct{
 	lk *lk.Client
 
 	// policy Policy // tracks subscription policy
-	// layout layout.Stage // current layout
-	// roomSnap RoomSnapshot // current room state
+	stageTracks map[string]bool // track ID -> onStage
+	roomSnap *RoomSnapshot // current room state
 
-	evCh chan Event // internal events
+	evCh chan SystemEvent // internal events
 	tick *time.Ticker // periodic safety reconciliation
 }
 
-func NewAgent(cfg AgentConfig) *Agent { return &Agent{cfg: cfg} }
+func NewAgent(cfg AgentConfig) *Agent {
+	return &Agent{
+		cfg: cfg,
+		roomSnap: &RoomSnapshot{
+			Participants : make(map[string]*ParticipantInfo),
+			CurrentSubs: make(map[string]DecisionAction),
+			Version: 0,
+		},
+		stageTracks: make(map[string]bool),
+	}
+}
 
 func (a *Agent) Run(ctx context.Context) error {
 	lg := a.cfg.Logger
@@ -49,12 +59,15 @@ func (a *Agent) Run(ctx context.Context) error {
 	}()
 
 	// Wire up event handlers
-	a.evCh = make(chan Event, 64)
+	a.evCh = make(chan SystemEvent, 64)
 	// periodic reconciliation allows for the state to be eventually consistent
 	// in case we miss some events or something unexpected happens like missed or out of order events
 	a.tick = time.NewTicker(5 * time.Second)
 	go a.consumeLiveKitEvents(ctx)
 	go a.serveLayoutApi(ctx)
+
+	// TODO initial room state fetch
+	// Get your own participant ID to be able to ignore your own events
 
 	// Main loop
 	for {
@@ -65,10 +78,11 @@ func (a *Agent) Run(ctx context.Context) error {
 			return ctx.Err()
 
 		case <-a.tick.C:
+			// TODO query LiveKit for the current room state and compare with our state
 			a.reconcileState(ctx)
 
 		case ev := <-a.evCh:
-			lg.Infof("event: %v", ev.Type)
+			lg.Infof("event: %v", logging.FormatValue(ev))
 			a.applyEvent(ev)
 			a.reconcileState(ctx)
 		case <-ctx.Done():
@@ -77,6 +91,14 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 }
 
+func (a *Agent) serveLayoutApi(ctx context.Context) {
+	lg := a.cfg.Logger
+	lg.Infof("starting layout API server")
+	// TODO
+	// push layout changes to the event channel
+	<-ctx.Done()
+	lg.Infof("stopping layout API server")
+}
 
 func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
 	lg := a.cfg.Logger
@@ -88,36 +110,95 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
 			return
 		case e := <-a.lk.Events():
 			switch e.(type) {
-				case lk.ParticipantJoined, lk.ParticipantLeft:
+				case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
 					lg.Infof("received LiveKit event: %s", logging.FormatValue(e))
-					a.evCh <- Event{Type: "LKEVent"}
+					a.evCh <- RoomChangedEvent{ LkEvents: []lk.Event{e} }
+					// TODO coalesce multiple ParticipantJoined/Left, TrackPublished/Unpublished events into one RoomChangedEvent
+					// The idea is to pull as many events as possible from the channel without blocking
+					// and then push a single RoomChangedEvent to the event channel.
+					// This way we avoid excessive reconciliations when many participants join/leave or publish/unpublish tracks at once.
+					// Something like this:
+					// for {
+					// 	select {
+					// 	case e2 := <-a.lk.Events():
+					// 		switch e2.(type) {
+					// 		case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
+					// 			lg.Infof("coalescing LiveKit event: %s", logging.FormatValue(e2))
+					// 		default:
+					// 			// push back the event for later processing
+					// 			a.lk.PushBackEvent(e2)
+					// 			break
+					// 		}
+					// 	default:
+					// 		break
+					// 	}
+					// }
+				case lk.TrackSubscribed:
+					ev := e.(lk.TrackSubscribed)
+					lg.Infof("TrackSubscribed: %s track %s kind %s", ev.Identity, ev.TID, ev.Kind)
+					a.onStageTracks[ev.TID] = true // assume subscribed tracks are on stage
 				default:
 					lg.Debugf("ignoring LiveKit event: %s", logging.FormatValue(e))
 				}
 		default:
-			// ev, err := a.lk.NextEvent(ctx)
-			// lg.Infof("received LiveKit event: %v", ev)
-			/// temp
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
 }
 
-func (a *Agent) serveLayoutApi(ctx context.Context) {
-	lg := a.cfg.Logger
-	lg.Infof("starting layout API server")
-	// TODO
-	<-ctx.Done()
-	lg.Infof("stopping layout API server")
-}
+func (a *Agent) applyEvent(ev SystemEvent) {
+	a.cfg.Logger.Debugf("applying event: %v", logging.FormatValue(ev))
 
-func (a *Agent) applyEvent(ev Event) {
-	a.cfg.Logger.Debugf("applying event: %v", ev)
-	// TODO
+	switch e := ev.(type) {
+	case RoomChangedEvent:
+		// Update room snapshot based on the events
+		for _, lkEv := range e.LkEvents {
+			switch ev2 := lkEv.(type) {
+			case lk.ParticipantJoined:
+				a.roomSnap.Participants[ev2.PID] = &ParticipantInfo{ ID: ev2.PID, Identity: ev2.Identity }
+			case lk.ParticipantLeft:
+				delete(a.roomSnap.Participants, ev2.PID)
+			case lk.TrackPublished:
+				p, ok := a.roomSnap.Participants[ev2.PID]
+				if !ok {
+					a.cfg.Logger.Errorf("TrackPublished for unknown participant %s", ev2.PID)
+					continue
+				}
+				t := &TrackInfo{ ID: ev2.TID, Kind: TrackKind(ev2.Kind), PID: ev2.PID }
+				if p.PublishedTracks == nil {
+					p.PublishedTracks = make(map[string]*TrackInfo)
+				}
+				p.PublishedTracks[ev2.TID] = t
+			case lk.TrackUnpublished:
+				p, ok := a.roomSnap.Participants[ev2.PID]
+				if !ok {
+					a.cfg.Logger.Errorf("TrackUnpublished for unknown participant %s", ev2.PID)
+					continue
+				}
+				delete(p.PublishedTracks, ev2.TID)
+			default:
+				a.cfg.Logger.Debugf("ignoring LiveKit event in RoomChangedEvent: %s", logging.FormatValue(ev2))
+			}
+		}
+	case LayoutChangedEvent:
+		// Update room layout snapshot
+	}
 }
 
 func (a *Agent) reconcileState(ctx context.Context) {
-	// a.cfg.Logger.Debugf("reconciling state...")
-	// TODO
+	// Decide changes based on the current layout and policy
+	a.cfg.Logger.Debugf("Reconciling state. Room snapshot: %v", logging.FormatValue(a.roomSnap))
+
+	lv := layout.LayoutView{ OnStage: a.stageTracks }
+	decs := Decide(Policy{}, lv, a.roomSnap)
+
+	// Compare with current subscriptions (ask client or track locally)
+	cur := a.lk.SubscriptionSnapshot()
+	ops := Diff(cur, decs)
+
+	for _, op := range ops {
+		a.cfg.Logger.Infof("applying subscription change: %v", logging.FormatValue(op))
+		// TODO apply the change via LiveKit client
+	}
 }
 
