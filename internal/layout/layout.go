@@ -6,6 +6,18 @@ import (
 	"net/http"
 )
 
+// Basic view of the layout, which tracks are on stage, will be extended later
+type LayoutView struct {
+	OnStage map[string]bool // track ID -> onStage
+}
+
+type Slot struct {
+	Id	    int		  `json:"id,omitempty"`
+	TrackID string  `json:"trackId,omitempty"`
+	Rect    Rect    `json:"rect"`
+	Effects []string `json:"effects,omitempty"`
+}
+
 type Rect struct {
 	X float32 `json:"x"`
 	Y float32 `json:"y"`
