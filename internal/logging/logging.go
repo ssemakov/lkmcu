@@ -3,6 +3,7 @@ package logging
 import (
 	"fmt"
 	"log"
+	"reflect"
 )
 
 type Logger struct{ region, level string }
@@ -20,9 +21,11 @@ func (l *Logger) Errorf(f string, a ...interface{}) { log.Printf(l.prefix()+"ERR
 func (l *Logger) Fatalf(f string, a ...interface{}) { log.Fatalf(l.prefix()+f, a...) }
 
 // FormatValue uses Formatter interface if available, otherwise returns default format
-func FormatValue(v interface{}) string {
-	if formatter, ok := v.(Formatter); ok {
+func FormatValue[T any](v T) string {
+	if formatter, ok := any(v).(Formatter); ok {
 		return formatter.Format()
 	}
-	return fmt.Sprintf("%+v", v)
+
+	typeName := reflect.TypeOf(v).Name()
+	return fmt.Sprintf("%s{%+v}", typeName, v)
 }

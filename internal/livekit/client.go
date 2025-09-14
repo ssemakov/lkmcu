@@ -6,6 +6,7 @@ import (
 
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/pion/webrtc/v4"
+	"github.com/ssemakov/lkmcu/internal/logging"
 )
 
 type Room interface {
@@ -34,6 +35,10 @@ const (
 	DropOldest DropPolicy = iota // drop oldest event when buffer is full
 	Block                        // block until there is space in the buffer
 )
+
+type Subscriptions struct {
+	TrackID string
+}
 
 func NewClient(url, apiKey, apiSecret string, opts *EventOptions) *Client {
 	if opts == nil {
@@ -75,6 +80,10 @@ func (c *Client) JoinRoom(roomName, identity string) error {
 	return nil
 }
 
+func (c *Client) SubscriptionSnapshot() []Subscriptions {
+	return []Subscriptions{}
+}
+
 func (c *Client) Close() error {
 	close(c.evCh)
 
@@ -85,41 +94,7 @@ func (c *Client) Close() error {
 	return errors.New("room is not connected")
 }
 
-/// LiveKit events normalization and handling
-
-func (c *Client) Events() <-chan Event {
-	return c.evCh
-}
-
-func (c *Client) onParticipantJoined(p *lksdk.RemoteParticipant) {
-	evt := ParticipantJoined{ PID: p.SID(), Identity: p.Identity() }
-	c.push(evt)
-}
-
-func (c *Client) onParticipantLeft(p *lksdk.RemoteParticipant) {
-	evt := ParticipantLeft{ PID: p.SID() }
-	c.push(evt)
-}
-
-func (c *Client) onTrackPublished(pub *lksdk.RemoteTrackPublication, p *lksdk.RemoteParticipant) {
-	/// ToDo normalize track kind
-	evt := TrackPublished{ PID: p.SID(), TID: pub.SID(), Kind: pub.Kind().String() }
-	c.push(evt)
-}
-
-func (c *Client) onTrackUnpublished(pub *lksdk.RemoteTrackPublication, p *lksdk.RemoteParticipant) {
-	evt := TrackUnpublished{ PID: p.SID(), TID: pub.SID() }
-	c.push(evt)
-}
-
-func (c *Client) onRoomDisconnected(reason lksdk.DisconnectionReason) {
-	c.push(RoomDisconnected{Reason: string(reason)})
-}
-
-func (c *Client) onRoomReconnected() {
-	c.push(RoomReconnected{})
-}
-
+// events pushing with backpresure / dropping policy
 func (c *Client) push(evt Event) {
 	select {
 	case c.evCh <- evt:
@@ -135,11 +110,46 @@ func (c *Client) push(evt Event) {
 	}
 }
 
+/// LiveKit events normalization and handling
+func (c *Client) Events() <-chan Event {
+	return c.evCh
+}
+
+func (c *Client) onParticipantJoined(p *lksdk.RemoteParticipant) {
+	evt := ParticipantJoined{ PID: p.SID(), Identity: p.Identity() }
+	c.push(evt)
+}
+
+func (c *Client) onParticipantLeft(p *lksdk.RemoteParticipant) {
+	evt := ParticipantLeft{ PID: p.SID(), Identity: p.Identity() }
+	c.push(evt)
+}
+
+func (c *Client) onTrackPublished(pub *lksdk.RemoteTrackPublication, p *lksdk.RemoteParticipant) {
+	/// ToDo normalize track kind
+	evt := TrackPublished{ PID: p.SID(), Identity: p.Identity(), TID: pub.SID(), Kind: pub.Kind().String(),
+		trackPub: logging.FormatValue(pub), participant: logging.FormatValue(p) }
+	c.push(evt)
+}
+
+func (c *Client) onTrackUnpublished(pub *lksdk.RemoteTrackPublication, p *lksdk.RemoteParticipant) {
+	evt := TrackUnpublished{ PID: p.SID(), Identity: p.Identity(), TID: pub.SID() }
+	c.push(evt)
+}
+
+func (c *Client) onRoomDisconnected(reason lksdk.DisconnectionReason) {
+	c.push(RoomDisconnected{Reason: string(reason)})
+}
+
+func (c *Client) onRoomReconnected() {
+	c.push(RoomReconnected{})
+}
+
 func (c *Client) onTrackSubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
-	c.push(TrackSubscribed{ PID: rp.SID(), TID: pub.SID(), Kind: pub.Kind().String(), Track: track })
+	c.push(TrackSubscribed{ PID: rp.SID(), Identity: rp.Identity(), TID: pub.SID(), Kind: pub.Kind().String(), Track: track })
 }
 
 func (c *Client) onTrackUnsubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
-	c.push(TrackUnsubscribed{ PID: rp.SID(), TID: pub.SID(), Kind: pub.Kind().String(), Track: track })
+	c.push(TrackUnsubscribed{ PID: rp.SID(), Identity: rp.Identity(), TID: pub.SID(), Kind: pub.Kind().String(), Track: track })
 }
 
