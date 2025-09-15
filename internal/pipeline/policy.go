@@ -9,4 +9,23 @@ type Policy struct {
 	MaxVideoDecoders int
 }
 
+func (p *Policy) IsIncluded(kind TrackKind) bool {
+	if len(p.IncludeKinds) == 0 {
+		return true
+	}
+	for _, k := range p.IncludeKinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
 
+func (p *Policy) IsExcluded(kind TrackKind) bool {
+	for _, k := range p.ExcludeKinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}

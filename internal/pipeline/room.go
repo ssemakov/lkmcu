@@ -27,9 +27,19 @@ type ParticipantInfo struct {
 
 // Current snapshot of the room as we see it
 type RoomSnapshot struct {
+	Tracks 	     map[string]*TrackInfo       // track ID -> info
 	Participants map[string]*ParticipantInfo // participant ID -> info
 	CurrentSubs  map[string]DecisionAction   // track ID -> current decision
 	Version      uint64
+}
+
+func NewRoomSnapshot() *RoomSnapshot {
+	return &RoomSnapshot{
+		Tracks: make(map[string]*TrackInfo),
+		Participants: make(map[string]*ParticipantInfo),
+		CurrentSubs: make(map[string]DecisionAction),
+		Version: 0,
+	}
 }
 
 // logging Format implementations
@@ -92,6 +102,7 @@ func (rs *RoomSnapshot) UpsertTrack(PID string, TID string, Kind TrackKind) (*Tr
 			p.PublishedTracks = make(map[string]*TrackInfo)
 		}
 		p.PublishedTracks[TID] = t
+		rs.Tracks[TID] = t
 		return t, nil
 	}
 }
@@ -102,5 +113,7 @@ func (rs *RoomSnapshot) DeleteTrack(PID string, TID string) error {
 		return fmt.Errorf("DeleteTrack for unknown participant %s", PID)
 	}
 	delete(p.PublishedTracks, TID)
+	delete(rs.Tracks, TID)
+
 	return nil
 }

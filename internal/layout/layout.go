@@ -8,7 +8,7 @@ import (
 
 // Basic view of the layout, which tracks are on stage, will be extended later
 type LayoutView struct {
-	OnStage map[string]bool // track ID -> onStage
+	StageTracks map[string]string // track ID -> participant ID, can have both audio and video tracks
 }
 
 type Slot struct {
@@ -37,6 +37,12 @@ func Default() Stage {
 		{X: 0, Y: 0.5, W: 0.5, H: 0.5, Z: 0},
 		{X: 0.5, Y: 0.5, W: 0.5, H: 0.5, Z: 0},
 	}}
+}
+
+func NewLayoutView() *LayoutView {
+	return &LayoutView{
+		StageTracks: make(map[string]string),
+	}
 }
 
 func HTTPHandler(stage *Stage, w http.ResponseWriter, r *http.Request) {

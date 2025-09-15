@@ -32,12 +32,8 @@ type Agent struct{
 func NewAgent(cfg AgentConfig) *Agent {
 	return &Agent{
 		cfg: cfg,
-		roomSnap: &RoomSnapshot{
-			Participants : make(map[string]*ParticipantInfo),
-			CurrentSubs: make(map[string]DecisionAction),
-			Version: 0,
-		},
-		layoutView: &layout.LayoutView{ OnStage: make(map[string]bool) },
+		roomSnap: NewRoomSnapshot(),
+		layoutView: layout.NewLayoutView(),
 	}
 }
 
@@ -181,7 +177,13 @@ func (a *Agent) reconcileState(ctx context.Context) {
 	// Decide changes based on the current layout and policy
 	a.cfg.Logger.Debugf("Reconciling state. Room snapshot: %v", logging.FormatValue(a.roomSnap))
 
+	// TODO we may want to add PartialDecide only for dirty set of PID, TID (ones that were added/removed/changed)
+	// This can be done after profiler says that Decide is a bottleneck
+	// or we can keep track of dirty PIDs/TIDs in the room snapshot and pass them to Decide
+	// For now we just call full Decide every time
+	// TODO cache decisions on the room snapshot
 	decs := Decide(&Policy{}, a.layoutView, a.roomSnap)
+	a.cfg.Logger.Infof("Decisions: %v", logging.FormatValue(decs))
 
 	// Compare with current subscriptions (ask client or track locally)
 	cur := a.lk.SubscriptionSnapshot()

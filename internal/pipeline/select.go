@@ -9,7 +9,7 @@ type DecisionAction string
 const (
 	VideoFull DecisionAction = "video-full"
 	VideoLow  DecisionAction = "video-low"
-	AudioOnly DecisionAction = "audio-only"
+	Audio DecisionAction = "audio"
 	Paused  DecisionAction = "paused"
 )
 
@@ -26,10 +26,47 @@ func Decide(policy *Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) [
 	// 1. Excluded? - don't subscribe
 	// 2. Included and on stage? - subscribe full
 
-	// for layout.OnStage {id, onStage := range layout.OnStage {
-	// }
+	desc := []Decision{}
 
-	return []Decision{}
+	for tid, tInfo := range snapshot.Tracks {
+		// track presence
+		if tInfo == nil {
+			continue
+		}
+
+		// participant presence
+		pInfo, ok := snapshot.Participants[tInfo.PID]
+		if !ok || pInfo == nil {
+			continue
+		}
+
+		// policy
+		included := policy.IsIncluded(tInfo.Kind)
+		excluded := policy.IsExcluded(tInfo.Kind)
+
+		if !included || excluded {
+			desc = append(desc, Decision{TrackID: tid, Action: Paused, Reason: "excluded by policy"})
+			continue
+		}
+
+		// track on stage?
+		_, onStage := layout.StageTracks[tid]
+		if !onStage {
+			desc = append(desc, Decision{TrackID: tid, Action: Paused, Reason: "not on stage"})
+			continue
+		}
+
+		switch tInfo.Kind {
+			case TrackVideo, TrackScreenShare:
+				desc = append(desc, Decision{TrackID: tid, Action: VideoFull, Reason: "video on stage"})
+			case TrackAudio:
+				desc = append(desc, Decision{TrackID: tid, Action: Audio, Reason: "audio on stage"})
+			default:
+				desc = append(desc, Decision{TrackID: tid, Action: Paused, Reason: "unknown track kind"})
+		}
+	}
+
+	return desc
 }
 
 func Diff(cur []livekit.Subscriptions, decs []Decision) []Operations {
