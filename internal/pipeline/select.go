@@ -69,7 +69,7 @@ func Decide(policy *Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) [
 	return desc
 }
 
-func Diff(cur []livekit.Subscriptions, decs []Decision) []Operations {
+func Diff(cur []*livekit.Subscription, decs []Decision) []Operations {
 	// Compare current subscriptions with desired decisions and produce operations
 	return []Operations{}
 }

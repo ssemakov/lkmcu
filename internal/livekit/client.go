@@ -8,15 +8,19 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-type Room interface {
-	Disconnect()
+type Subscription struct {
+	TID string
+	PID string
+	Kind string
+	Source string
 }
 
 type Client struct {
 	apiKey    string
 	apiSecret string
 	url       string
-	room      Room
+	room      *lksdk.Room
+	subs   		[]*Subscription
 
 	evCh chan Event
 	dropPolicy DropPolicy
@@ -35,15 +39,13 @@ const (
 	Block                        // block until there is space in the buffer
 )
 
-type Subscriptions struct {
-	TrackID string
-}
-
 func NewClient(url, apiKey, apiSecret string, opts *EventOptions) *Client {
 	if opts == nil {
 		opts = &EventOptions{ BufferSize: 64, DropPolicy: DropOldest }
 	}
-	return &Client{url: url, apiKey: apiKey, apiSecret: apiSecret, evCh: make(chan Event, opts.BufferSize),
+	return &Client{url: url, apiKey: apiKey, apiSecret: apiSecret,
+		evCh: make(chan Event, opts.BufferSize),
+		subs: make([]*Subscription, 0),
 		dropPolicy: opts.DropPolicy }
 }
 
@@ -69,6 +71,7 @@ func (c *Client) JoinRoom(roomName, identity string) error {
 		RoomName:            roomName,
 		ParticipantIdentity: identity,
 		ParticipantName:     "",
+		ParticipantKind:     lksdk.ParticipantAgent,
 	}, roomCB, lksdk.WithAutoSubscribe(false))
 
 	if err != nil {
@@ -79,8 +82,23 @@ func (c *Client) JoinRoom(roomName, identity string) error {
 	return nil
 }
 
-func (c *Client) SubscriptionSnapshot() []Subscriptions {
-	return []Subscriptions{}
+func (c *Client) SubscriptionSnapshot() []*Subscription {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.room == nil {
+		return c.subs
+	}
+
+	for _, p := range c.room.GetRemoteParticipants() {
+		for _, pub := range p.TrackPublications() {
+			if pub.IsSubscribed() {
+				c.subs = append(c.subs, &Subscription{ TID: pub.SID(), PID: p.SID(), Kind: pub.Kind().String(), Source: pub.Source().String() } )
+			}
+		}
+	}
+
+	return c.subs
 }
 
 func (c *Client) Close() error {

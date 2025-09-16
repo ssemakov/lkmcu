@@ -185,8 +185,11 @@ func (a *Agent) reconcileState(ctx context.Context) {
 	decs := Decide(&Policy{}, a.layoutView, a.roomSnap)
 	a.cfg.Logger.Infof("Decisions: %v", logging.FormatValue(decs))
 
-	// Compare with current subscriptions (ask client or track locally)
+	// Compare with current subscriptions
+	// TODO cache for event reconciliation and get the full sanpshot on periodic reconciliation
 	cur := a.lk.SubscriptionSnapshot()
+	a.cfg.Logger.Infof("Current subscriptions: %v", logging.FormatValue(cur))
+
 	ops := Diff(cur, decs)
 
 	for _, op := range ops {
