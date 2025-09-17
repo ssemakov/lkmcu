@@ -13,6 +13,8 @@ type Subscription struct {
 	PID string
 	Kind string
 	Source string
+
+	// layer int // video quality layer
 }
 
 type Client struct {

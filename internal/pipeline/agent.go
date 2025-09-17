@@ -191,6 +191,7 @@ func (a *Agent) reconcileState(ctx context.Context) {
 	a.cfg.Logger.Infof("Current subscriptions: %v", logging.FormatValue(cur))
 
 	ops := Diff(cur, decs)
+	a.cfg.Logger.Infof("Operations: %v", logging.FormatValue(ops))
 
 	for _, op := range ops {
 		a.cfg.Logger.Infof("applying subscription change: %v", logging.FormatValue(op))

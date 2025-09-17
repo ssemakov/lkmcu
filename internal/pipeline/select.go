@@ -19,7 +19,57 @@ type Decision struct {
 	Reason  string
 }
 
-type Operations interface { isOperation() }
+type Operations interface {
+	isOperation()
+	exec(lk *livekit.Client) error
+}
+
+type SubscribeOp struct {
+	TrackID string
+	Action  DecisionAction
+	Reason  string
+}
+type UnsubscribeOp struct {
+	TrackID string
+	Reason  string
+}
+
+type UpdateOp struct {
+	TrackID string
+	Action  DecisionAction
+	Reason  string
+}
+
+func (o *SubscribeOp) isOperation() {}
+func (o *UnsubscribeOp) isOperation() {}
+func (o *UpdateOp) isOperation() {}
+
+func (o *SubscribeOp) String() string {
+	return "SubscribeOp{ TrackID: " + o.TrackID + ", Action: " + string(o.Action) + ", Reason: " + o.Reason + " }"
+}
+
+func (o *UnsubscribeOp) String() string {
+	return "UnsubscribeOp{ TrackID: " + o.TrackID + ", Reason: " + o.Reason + " }"
+}
+
+func (o *UpdateOp) String() string {
+	return "UpdateOp{ TrackID: " + o.TrackID + ", Action: " + string(o.Action) + ", Reason: " + o.Reason + " }"
+}
+
+func (o *SubscribeOp) exec(lk *livekit.Client) error {
+	// return lk.Subscribe(o.TrackID, o.Action)
+	return nil
+}
+
+func (o *UnsubscribeOp) exec(lk *livekit.Client) error {
+	// return lk.Unsubscribe(o.TrackID)
+	return nil
+}
+
+func (o *UpdateOp) exec(lk *livekit.Client) error {
+	// return lk.UpdateSubscription(o.TrackID, o.Action)
+	return nil
+}
 
 func Decide(policy *Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []Decision {
 	/// Basic decision logic:
@@ -70,6 +120,31 @@ func Decide(policy *Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) [
 }
 
 func Diff(cur []*livekit.Subscription, decs []Decision) []Operations {
-	// Compare current subscriptions with desired decisions and produce operations
-	return []Operations{}
+	var ops []Operations
+
+	for _, d := range decs {
+		switch d.Action {
+		case VideoFull, VideoLow, Audio:
+			found := false
+			for _, s := range cur {
+				if s.TID == d.TrackID {
+					found = true
+					break // no op for now,  already subscribed
+				}
+			}
+
+			if !found {
+				// TODO change the quality layer and update if needed
+				ops = append(ops, &SubscribeOp{ TrackID: d.TrackID, Action: d.Action, Reason: d.Reason } )
+			}
+		case Paused:
+			for _, s := range cur {
+				if s.TID == d.TrackID {
+					return []Operations{ &UnsubscribeOp{ TrackID: d.TrackID, Reason: d.Reason } }
+				}
+			}
+		}
+	}
+
+	return ops
 }
