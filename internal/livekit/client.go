@@ -22,7 +22,6 @@ type Client struct {
 	apiSecret string
 	url       string
 	room      *lksdk.Room
-	subs   		[]*Subscription
 
 	evCh chan Event
 	dropPolicy DropPolicy
@@ -47,23 +46,30 @@ func NewClient(url, apiKey, apiSecret string, opts *EventOptions) *Client {
 	}
 	return &Client{url: url, apiKey: apiKey, apiSecret: apiSecret,
 		evCh: make(chan Event, opts.BufferSize),
-		subs: make([]*Subscription, 0),
 		dropPolicy: opts.DropPolicy }
 }
 
 func (c *Client) JoinRoom(roomName, identity string) error {
 	roomCB := &lksdk.RoomCallback{
-		OnParticipantConnected: c.onParticipantJoined,
-		OnParticipantDisconnected: c.onParticipantLeft,
+		OnParticipantConnected: func(rp *lksdk.RemoteParticipant) { c.onParticipantJoined(rp) },
+		OnParticipantDisconnected: func(rp *lksdk.RemoteParticipant) { c.onParticipantLeft(rp) },
 		OnDisconnected: func() { c.onRoomDisconnected(lksdk.OtherReason) },
 		OnDisconnectedWithReason: c.onRoomDisconnected,
 		OnReconnected: c.onRoomReconnected,
 
 		ParticipantCallback: lksdk.ParticipantCallback{
-			OnTrackPublished:  c.onTrackPublished,
-			OnTrackUnpublished: c.onTrackUnpublished,
-			OnTrackSubscribed: c.onTrackSubscribed,
-			OnTrackUnsubscribed: c.onTrackUnsubscribed,
+			OnTrackPublished: func(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
+				c.onTrackPublished(pub, rp)
+			},
+			OnTrackUnpublished: func(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
+				c.onTrackUnpublished(pub, rp)
+			},
+			OnTrackSubscribed: func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
+				c.onTrackSubscribed(track, pub, rp)
+			},
+			OnTrackUnsubscribed: func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
+				c.onTrackUnsubscribed(track, pub, rp)
+			},
 		},
 	}
 
@@ -85,31 +91,29 @@ func (c *Client) JoinRoom(roomName, identity string) error {
 }
 
 func (c *Client) SubscriptionSnapshot() []*Subscription {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	subs := make([]*Subscription, 0, 16)
 
-	if c.room == nil {
-		return c.subs
-	}
-
-	for _, p := range c.room.GetRemoteParticipants() {
-		for _, pub := range p.TrackPublications() {
-			if pub.IsSubscribed() {
-				c.subs = append(c.subs, &Subscription{ TID: pub.SID(), PID: p.SID(), Kind: pub.Kind().String(), Source: pub.Source().String() } )
+	if c.room != nil {
+			for _, p := range c.room.GetRemoteParticipants() {
+					for _, pub := range p.TrackPublications() {
+							if pub.IsSubscribed() {
+									subs = append(subs, &Subscription{
+											TID: pub.SID(), PID: p.SID(),
+											Kind: pub.Kind().String(), Source: pub.Source().String(),
+									})
+							}
+					}
 			}
-		}
 	}
-
-	return c.subs
+	return subs
 }
 
 func (c *Client) Close() error {
-	close(c.evCh)
-
 	if c.room != nil {
 		c.room.Disconnect()
 		return nil
 	}
+
 	return errors.New("room is not connected")
 }
 
@@ -134,23 +138,40 @@ func (c *Client) Events() <-chan Event {
 	return c.evCh
 }
 
-func (c *Client) onParticipantJoined(p *lksdk.RemoteParticipant) {
+// seams for participant and track publication
+type remoteParticipant interface {
+	SID() string
+	Identity() string
+}
+
+type remoteTrackPublication interface {
+	SID() string
+	Kind() lksdk.TrackKind
+}
+
+// compile-time interface implementation assertions
+var (
+	_ remoteParticipant      = (*lksdk.RemoteParticipant)(nil)
+	_ remoteTrackPublication = (*lksdk.RemoteTrackPublication)(nil)
+)
+
+func (c *Client) onParticipantJoined(p remoteParticipant) {
 	evt := ParticipantJoined{ PID: p.SID(), Identity: p.Identity() }
 	c.push(evt)
 }
 
-func (c *Client) onParticipantLeft(p *lksdk.RemoteParticipant) {
+func (c *Client) onParticipantLeft(p remoteParticipant) {
 	evt := ParticipantLeft{ PID: p.SID(), Identity: p.Identity() }
 	c.push(evt)
 }
 
-func (c *Client) onTrackPublished(pub *lksdk.RemoteTrackPublication, p *lksdk.RemoteParticipant) {
+func (c *Client) onTrackPublished(pub remoteTrackPublication, p remoteParticipant) {
 	/// ToDo normalize track kind
 	evt := TrackPublished{ PID: p.SID(), Identity: p.Identity(), TID: pub.SID(), Kind: pub.Kind().String()}
 	c.push(evt)
 }
 
-func (c *Client) onTrackUnpublished(pub *lksdk.RemoteTrackPublication, p *lksdk.RemoteParticipant) {
+func (c *Client) onTrackUnpublished(pub remoteTrackPublication, p remoteParticipant) {
 	evt := TrackUnpublished{ PID: p.SID(), Identity: p.Identity(), TID: pub.SID() }
 	c.push(evt)
 }
@@ -163,11 +184,11 @@ func (c *Client) onRoomReconnected() {
 	c.push(RoomReconnected{})
 }
 
-func (c *Client) onTrackSubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
+func (c *Client) onTrackSubscribed(track *webrtc.TrackRemote, pub remoteTrackPublication, rp remoteParticipant) {
 	c.push(TrackSubscribed{ PID: rp.SID(), Identity: rp.Identity(), TID: pub.SID(), Kind: pub.Kind().String(), Track: track })
 }
 
-func (c *Client) onTrackUnsubscribed(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
+func (c *Client) onTrackUnsubscribed(track *webrtc.TrackRemote, pub remoteTrackPublication, rp remoteParticipant) {
 	c.push(TrackUnsubscribed{ PID: rp.SID(), Identity: rp.Identity(), TID: pub.SID(), Kind: pub.Kind().String(), Track: track })
 }
 
