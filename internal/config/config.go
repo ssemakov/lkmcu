@@ -78,6 +78,8 @@ func Resolve(flags Config, env Config, defaults Config) Config {
 		Identity:   firstNonEmpty(flags.Identity, env.Identity, defaults.Identity, "Ex_"+NewID(12)),
 		Region:     firstNonEmpty(flags.Region, env.Region, defaults.Region),
 		Addr:       firstNonEmpty(flags.Addr, env.Addr, defaults.Addr),
+		IncludeKind: firstNonEmpty(flags.IncludeKind, env.IncludeKind, defaults.IncludeKind),
+		ExcludeKind: firstNonEmpty(flags.ExcludeKind, env.ExcludeKind, defaults.ExcludeKind),
 	}
 
 }
