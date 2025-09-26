@@ -2,7 +2,7 @@ package livekit
 
 import (
 	"errors"
-	"sync"
+	"sync/atomic"
 
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/pion/webrtc/v4"
@@ -25,7 +25,9 @@ type Client struct {
 
 	evCh chan Event
 	dropPolicy DropPolicy
-	mu sync.RWMutex
+	listSubs func(*lksdk.Room) []*Subscription
+	closed atomic.Bool
+	// mu sync.Mutex
 }
 
 type EventOptions struct {
@@ -46,7 +48,8 @@ func NewClient(url, apiKey, apiSecret string, opts *EventOptions) *Client {
 	}
 	return &Client{url: url, apiKey: apiKey, apiSecret: apiSecret,
 		evCh: make(chan Event, opts.BufferSize),
-		dropPolicy: opts.DropPolicy }
+		dropPolicy: opts.DropPolicy,
+		listSubs: defaultListSubs, }
 }
 
 func (c *Client) JoinRoom(roomName, identity string) error {
@@ -90,25 +93,9 @@ func (c *Client) JoinRoom(roomName, identity string) error {
 	return nil
 }
 
-func (c *Client) SubscriptionSnapshot() []*Subscription {
-	subs := make([]*Subscription, 0, 16)
-
-	if c.room != nil {
-			for _, p := range c.room.GetRemoteParticipants() {
-					for _, pub := range p.TrackPublications() {
-							if pub.IsSubscribed() {
-									subs = append(subs, &Subscription{
-											TID: pub.SID(), PID: p.SID(),
-											Kind: pub.Kind().String(), Source: pub.Source().String(),
-									})
-							}
-					}
-			}
-	}
-	return subs
-}
-
 func (c *Client) Close() error {
+	c.closed.Store(true)
+
 	if c.room != nil {
 		c.room.Disconnect()
 		return nil
@@ -119,6 +106,8 @@ func (c *Client) Close() error {
 
 // events pushing with backpresure / dropping policy
 func (c *Client) push(evt Event) {
+	if c.closed.Load() { return }
+
 	select {
 	case c.evCh <- evt:
 		return
@@ -138,6 +127,27 @@ func (c *Client) Events() <-chan Event {
 	return c.evCh
 }
 
+func defaultListSubs(r *lksdk.Room) []*Subscription {
+	subs := make([]*Subscription, 0, 16)
+		for _, p := range r.GetRemoteParticipants() {
+			for _, pub := range p.TrackPublications() {
+					if pub.IsSubscribed() {
+							subs = append(subs, &Subscription{
+									TID: pub.SID(), PID: p.SID(),
+									Kind: pub.Kind().String(), Source: pub.Source().String(),
+							})
+					}
+			}
+	}
+	return subs
+}
+
+func (c *Client) SubscriptionSnapshot() []*Subscription {
+	if c.room == nil { return nil }
+	return c.listSubs(c.room)
+}
+
+
 // seams for participant and track publication
 type remoteParticipant interface {
 	SID() string
@@ -147,6 +157,11 @@ type remoteParticipant interface {
 type remoteTrackPublication interface {
 	SID() string
 	Kind() lksdk.TrackKind
+}
+
+type trackRemote interface {
+	ID() string
+	Kind() webrtc.RTPCodecType
 }
 
 // compile-time interface implementation assertions
@@ -184,11 +199,11 @@ func (c *Client) onRoomReconnected() {
 	c.push(RoomReconnected{})
 }
 
-func (c *Client) onTrackSubscribed(track *webrtc.TrackRemote, pub remoteTrackPublication, rp remoteParticipant) {
+func (c *Client) onTrackSubscribed(track trackRemote, pub remoteTrackPublication, rp remoteParticipant) {
 	c.push(TrackSubscribed{ PID: rp.SID(), Identity: rp.Identity(), TID: pub.SID(), Kind: pub.Kind().String(), Track: track })
 }
 
-func (c *Client) onTrackUnsubscribed(track *webrtc.TrackRemote, pub remoteTrackPublication, rp remoteParticipant) {
+func (c *Client) onTrackUnsubscribed(track trackRemote, pub remoteTrackPublication, rp remoteParticipant) {
 	c.push(TrackUnsubscribed{ PID: rp.SID(), Identity: rp.Identity(), TID: pub.SID(), Kind: pub.Kind().String(), Track: track })
 }
 

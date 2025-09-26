@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/pion/webrtc/v4"
 )
@@ -63,6 +62,34 @@ func TestClient_Close_WithRoom(t *testing.T) {
 		t.Fatalf("Close() returned error: %v", err)
 	}
 }
+func TestSubscriptionSnapshot_NilRoomREturnsEmpty(t *testing.T) {
+	c := NewClient("ws://x", "k", "s", nil)
+
+	got := c.SubscriptionSnapshot()
+	if len(got) != 0 {
+		t.Errorf("got %d, want 0", len(got))
+	}
+}
+
+func TestSubscriptionSnapshot_UsesListSubsSeam(t *testing.T) {
+    c := NewClient("ws://x", "k", "s", nil)
+    fake := []*Subscription{
+        {TID: "t1", PID: "p1", Kind: "video", Source: "camera"},
+        {TID: "t2", PID: "p2", Kind: "audio", Source: "mic"},
+    }
+    c.room = &lksdk.Room{}
+    c.listSubs = func(_ *lksdk.Room) []*Subscription { return fake }
+
+    got := c.SubscriptionSnapshot()
+
+    if len(got) != len(fake) { t.Fatalf("len mismatch") }
+
+		// mutate returned slice; shouldn't affect a second call
+    _ = append(got[:0], got[1:]...)
+    got2 := c.SubscriptionSnapshot()
+    if len(got2) != len(fake) { t.Fatalf("snapshot not independent") }
+}
+
 
 type fakeRP struct{ sid, identity string }
 
@@ -76,6 +103,10 @@ type fakePub struct {
 
 func (f fakePub) SID() string           { return f.sid }
 func (f fakePub) Kind() lksdk.TrackKind { return f.kind }
+
+type fakeWebRTCTrack struct { Id string; }
+func (f fakeWebRTCTrack) ID() string { return f.Id }
+func (f fakeWebRTCTrack) Kind() webrtc.RTPCodecType { return webrtc.RTPCodecTypeVideo }
 
 func newClient() *Client {
 	return NewClient("ws://localhost:7880", "key", "secret", nil)
@@ -93,7 +124,7 @@ func recvOne(t *testing.T, ch <-chan Event) any {
 }
 
 func TestClient_EventHandling(t *testing.T) {
-	track := &webrtc.TrackRemote{}
+	track := fakeWebRTCTrack{Id: "track1"}
 	pub := fakePub{sid: "track1", kind: lksdk.TrackKindVideo}
 	rp := fakeRP{sid: "participant1", identity: "user1"}
 
@@ -157,9 +188,77 @@ func TestClient_EventHandling(t *testing.T) {
 				t.Fatalf("event type: want %s, got %s", wantT, gotT)
 			}
 
-			if diff := cmp.Diff(tc.want, got, cmpopts.IgnoreUnexported(webrtc.TrackRemote{})); diff != "" {
+			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Fatalf("event mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
+}
+
+func TestPush_DropOldest(t *testing.T) {
+    c := NewClient("ws://x", "k", "s", &EventOptions{BufferSize: 2, DropPolicy: DropOldest})
+
+    c.push(ParticipantJoined{PID: "1"})
+    c.push(ParticipantJoined{PID: "2"})
+    c.push(ParticipantJoined{PID: "3"}) // should drop "1"
+
+    got := []Event{<-c.Events(), <-c.Events()}
+    if got[0].(ParticipantJoined).PID != "2" || got[1].(ParticipantJoined).PID != "3" {
+        t.Fatalf("unexpected: %#v", got)
+    }
+}
+
+func TestPush_Block(t *testing.T) {
+    c := NewClient("ws://x", "k", "s", &EventOptions{BufferSize: 1, DropPolicy: Block})
+    c.push(ParticipantJoined{PID: "1"})
+
+    blocked := make(chan struct{})
+    go func() {
+        c.push(ParticipantJoined{PID: "2"}) // should block until read
+        close(blocked)
+    }()
+
+    select {
+    case <-blocked:
+        t.Fatal("push should block, but it returned early")
+    case <-time.After(50 * time.Millisecond):
+        // still blocked as expected
+    }
+
+    <-c.Events()
+    select {
+    case <-blocked: // now writer should have completed
+    case <-time.After(200 * time.Millisecond):
+        t.Fatal("push remained blocked after space available")
+    }
+}
+
+func TestClose_BufferedEventsRemainReadable(t *testing.T) {
+    c := NewClient("ws://x","k","s", &EventOptions{BufferSize: 2, DropPolicy: Block})
+
+		c.onParticipantJoined(fakeRP{sid:"1", identity:"a"})
+    c.onParticipantJoined(fakeRP{sid:"2", identity:"b"})
+
+    _ = c.Close()
+
+		// can read buffered events after close
+    got1 := <-c.Events()
+    got2 := <-c.Events()
+    if got1.(ParticipantJoined).PID != "1" || got2.(ParticipantJoined).PID != "2" {
+        t.Fatalf("unexpected events: %#v %#v", got1, got2)
+    }
+}
+
+func TestClose_NoNewEventsAfter(t *testing.T) {
+    c := NewClient("ws://x","k","s", &EventOptions{BufferSize: 1, DropPolicy: Block})
+    _ = c.Close()
+
+    c.onParticipantJoined(fakeRP{sid:"3", identity:"c"})
+
+    select {
+    case e := <-c.Events():
+        t.Fatalf("unexpected event after Close: %#v", e)
+    case <-time.After(50 * time.Millisecond):
+        // good: nothing produced
+    }
 }
