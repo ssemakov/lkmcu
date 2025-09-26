@@ -29,6 +29,10 @@ func FormatValue[T any](v T) string {
 	val := reflect.ValueOf(v)
 	typ := reflect.TypeOf(v)
 
+	if typ == nil {
+		return "<nil>"
+	}
+
 	if typ.Kind() == reflect.Ptr {
 		if val.IsNil() {
 			// To get the type name from a nil pointer, we need to use Elem() on the type
