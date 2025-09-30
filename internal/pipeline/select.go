@@ -72,10 +72,6 @@ func (o *UpdateOp) exec(lk *livekit.Client) error {
 }
 
 func Decide(policy *Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []Decision {
-	/// Basic decision logic:
-	// 1. Excluded? - don't subscribe
-	// 2. Included and on stage? - subscribe full
-
 	desc := []Decision{}
 
 	for tid, tInfo := range snapshot.Tracks {
@@ -120,7 +116,7 @@ func Decide(policy *Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) [
 }
 
 func Diff(cur []*livekit.Subscription, decs []Decision) []Operations {
-	var ops []Operations
+	ops := make([]Operations, 0)
 
 	for _, d := range decs {
 		switch d.Action {
