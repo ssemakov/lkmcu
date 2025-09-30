@@ -11,7 +11,7 @@ type SystemEvent interface { isSystemEvent() }
 
 type (
 	RoomChangedEvent struct{
-		LkEvents []livekit.Event // can contain multiple coalesced eventss
+		LkEvents []livekit.Event // can contain multiple coalesced events
 	}
 	LayoutChangedEvent struct{ Layout layout.LayoutView }
 )
