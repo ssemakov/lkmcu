@@ -26,7 +26,7 @@ func main() {
 		},
 	)
 
-	lg := logging.New(cfg.Region, cfg.LogLevel)
+	lg := logging.NewConsoleLogger(cfg.Region, cfg.LogLevel)
 
 	if cfg.Room == "" {
 		lg.Fatalf("room is required (--room or LIVEKIT_ROOM)")
