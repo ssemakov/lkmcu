@@ -12,12 +12,20 @@ import (
 
 type AgentConfig struct {
 	Layout layout.Stage
-	Logger *logging.Logger
+	Logger logging.Logger
 	Config config.Config
 }
+
+type lkClient interface {
+	JoinRoom(roomName, identity string) error
+	Close() error
+	Events() <-chan lk.Event
+	SubscriptionSnapshot() []*lk.Subscription
+}
+
 type Agent struct{
 	cfg AgentConfig
-	lk *lk.Client
+	lk lkClient
 
 	// policy Policy // tracks subscription policy
 	// stageTracks map[string]bool // track ID -> onStage
@@ -83,8 +91,6 @@ func (a *Agent) Run(ctx context.Context) error {
 			lg.Infof("event: %v", logging.FormatValue(ev))
 			a.applyEvent(ev)
 			a.reconcileState(ctx)
-		case <-ctx.Done():
-			break
 		}
 	}
 }
@@ -147,25 +153,25 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
 func (a *Agent) applyEvent(ev SystemEvent) {
 	a.cfg.Logger.Debugf("applying event: %v", logging.FormatValue(ev))
 
-	switch e := ev.(type) {
+	switch sysE := ev.(type) {
 	case RoomChangedEvent:
 		// Update room snapshot based on the events
-		for _, lkEv := range e.LkEvents {
-			switch ev2 := lkEv.(type) {
+		for _, lkEv := range sysE.LkEvents {
+			switch lkE := lkEv.(type) {
 			case lk.ParticipantJoined:
-				a.roomSnap.UpsertParticipant(ev2.PID, ev2.Identity)
+				a.roomSnap.UpsertParticipant(lkE.PID, lkE.Identity)
 			case lk.ParticipantLeft:
-				a.roomSnap.DeleteParticipant(ev2.PID)
+				a.roomSnap.DeleteParticipant(lkE.PID)
 			case lk.TrackPublished:
-				_, err := a.roomSnap.UpsertTrack(ev2.PID, ev2.TID, TrackKind(ev2.Kind))
+				_, err := a.roomSnap.UpsertTrack(lkE.PID, lkE.TID, TrackKind(lkE.Kind))
 				if err != nil {
 					a.cfg.Logger.Errorf("TrackPublished error: %v", err)
 					continue
 				}
 			case lk.TrackUnpublished:
-				a.roomSnap.DeleteTrack(ev2.PID, ev2.TID)
+				a.roomSnap.DeleteTrack(lkE.PID, lkE.TID)
 			default:
-				a.cfg.Logger.Debugf("ignoring LiveKit event in RoomChangedEvent: %s", logging.FormatValue(ev2))
+				a.cfg.Logger.Debugf("ignoring LiveKit event in RoomChangedEvent: %s", logging.FormatValue(lkE))
 			}
 		}
 	case LayoutChangedEvent:

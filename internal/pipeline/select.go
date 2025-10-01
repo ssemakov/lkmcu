@@ -110,6 +110,8 @@ func Decide(policy *Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) [
 			default:
 				desc = append(desc, Decision{TrackID: tid, Action: Paused, Reason: "unknown track kind"})
 		}
+
+		/// ToDo: Unsubscribe when participant left
 	}
 
 	return desc

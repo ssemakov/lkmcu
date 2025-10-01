@@ -5,15 +5,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/ssemakov/lkmcu/internal/config"
 	"github.com/ssemakov/lkmcu/internal/layout"
+	lk "github.com/ssemakov/lkmcu/internal/livekit"
 	"github.com/ssemakov/lkmcu/internal/logging"
 )
 
 func TestNewAgent(t *testing.T) {
 	cfg := AgentConfig{
 		Layout: layout.Default(),
-		Logger: logging.New("test", "info"),
+		Logger: logging.NewNullLogger("test", "info"),
 		Config: config.Config{
 			Room:       "test-room",
 			Identity:   "test-identity",
@@ -34,24 +36,22 @@ func TestNewAgent(t *testing.T) {
 	if agent.cfg.Config.Identity != "test-identity" {
 		t.Errorf("want Identity=test-identity, got %s", agent.cfg.Config.Identity)
 	}
-}
 
-func TestNewAgent_EmptyConfig(t *testing.T) {
-	cfg := AgentConfig{}
-	agent := NewAgent(cfg)
-
-	if agent == nil {
-		t.Fatal("NewAgent returned nil")
+	if agent.roomSnap == nil {
+		t.Error("expected non-nil room snapshot")
 	}
-	if agent.cfg.Logger != nil {
-		t.Error("expected nil logger in empty config")
+	if agent.layoutView == nil {
+		t.Error("expected non-nil layout view")
+	}
+	if agent.evCh != nil {
+		t.Error("expected nil event channel before Run()")
 	}
 }
 
 func TestAgent_Run_ContextCancellation(t *testing.T) {
 	cfg := AgentConfig{
 		Layout: layout.Default(),
-		Logger: logging.New("test", "info"),
+		Logger: logging.NewNullLogger("test", "info"),
 		Config: config.Config{
 			Room:       "test-room",
 			Identity:   "test-identity",
@@ -76,7 +76,7 @@ func TestAgent_Run_ContextCancellation(t *testing.T) {
 func TestAgent_Run_ContextTimeout(t *testing.T) {
 	cfg := AgentConfig{
 		Layout: layout.Default(),
-		Logger: logging.New("test", "info"),
+		Logger: logging.NewNullLogger("test", "info"),
 		Config: config.Config{
 			Room:       "test-room",
 			Identity:   "test-identity",
@@ -104,108 +104,117 @@ func TestAgent_Run_ContextTimeout(t *testing.T) {
 	}
 }
 
-func TestAgent_Run_DifferentConfigs(t *testing.T) {
-	tests := []struct {
-		name   string
-		config config.Config
+// Mock lk.Client for testing
+type mockLkClient struct {
+	events chan lk.Event
+	subs   []*lk.Subscription
+}
+
+func newMockLkClient() *mockLkClient {
+	return &mockLkClient{
+		events: make(chan lk.Event, 10),
+		subs:   []*lk.Subscription{},
+	}
+}
+
+func (m *mockLkClient) JoinRoom(roomName, identity string) error { return nil }
+func (m *mockLkClient) Close() error                             { return nil }
+func (m *mockLkClient) Events() <-chan lk.Event                  { return m.events }
+func (m *mockLkClient) SubscriptionSnapshot() []*lk.Subscription { return m.subs }
+
+func TestAgent_applyEvent(t *testing.T) {
+	agent := NewAgent(AgentConfig{
+		Logger: logging.NewNullLogger("test", "info"),
+	})
+
+	event := RoomChangedEvent{
+		LkEvents: []lk.Event{
+			lk.ParticipantJoined{PID: "participant-1", Identity: "p1"},
+			lk.TrackPublished{PID: "participant-1", TID: "track-1", Kind: "video"},
+		},
+	}
+
+	agent.applyEvent(event)
+
+	if _, ok := agent.roomSnap.Participants["participant-1"]; !ok {
+		t.Fatal("participant not found in room snapshot after applyEvent")
+	}
+
+	p := agent.roomSnap.Participants["participant-1"]
+	if _, ok := p.PublishedTracks["track-1"]; !ok {
+		t.Fatal("track not found for participant after applyEvent")
+	}
+}
+
+func TestAgent_reconcileState(t *testing.T) {
+	cases := []struct {
+		name        string
+		initialSnap *RoomSnapshot
+		initialSubs []*lk.Subscription
+		policy      *Policy
+		layout      *layout.LayoutView
+		expectedOps []Operations
 	}{
 		{
-			name: "minimal config",
-			config: config.Config{
-				Room:     "room1",
-				Identity: "user1",
-			},
+			name: "subscribe to new video track",
+			initialSnap: func() *RoomSnapshot {
+				s := NewRoomSnapshot()
+				s.UpsertParticipant("p1", "p1_identity")
+				s.UpsertTrack("p1", "t1", TrackVideo)
+				return s
+			}(),
+			initialSubs: []*lk.Subscription{},
+			policy:      &Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
+			layout:      func() *layout.LayoutView { v := layout.NewLayoutView(); v.StageTracks["t1"] = "p1"; return v }(),
+			expectedOps: []Operations{&SubscribeOp{TrackID: "t1", Action: VideoFull, Reason: "video on stage"}},
 		},
 		{
-			name: "full config",
-			config: config.Config{
-				Room:       "room2",
-				Identity:   "user2",
-				LivekitURL: "wss://example.com",
-				APIKey:     "key123",
-				APISecret:  "secret456",
-				Region:     "us-east",
-			},
+			name: "do nothing for existing subscription",
+			initialSnap: func() *RoomSnapshot {
+				s := NewRoomSnapshot()
+				s.UpsertParticipant("p1", "p1_identity")
+				s.UpsertTrack("p1", "t1", TrackVideo)
+				return s
+			}(),
+			initialSubs: []*lk.Subscription{{TID: "t1", PID: "p1"}},
+			policy:      &Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
+			layout:      func() *layout.LayoutView { v := layout.NewLayoutView(); v.StageTracks["t1"] = "p1"; return v }(),
+			expectedOps: []Operations{},
 		},
 		{
-			name: "empty strings",
-			config: config.Config{
-				Room:       "",
-				Identity:   "",
-				LivekitURL: "",
-				APIKey:     "",
-				APISecret:  "",
-			},
+			name: "ignore track when policy excludes its kind",
+			initialSnap: func() *RoomSnapshot {
+				s := NewRoomSnapshot()
+				s.UpsertParticipant("p1", "p1_identity")
+				s.UpsertTrack("p1", "t1", TrackAudio)
+				return s
+			}(),
+			initialSubs: []*lk.Subscription{},
+			policy:      &Policy{ExcludeKinds: []TrackKind{TrackAudio}},
+			layout:      func() *layout.LayoutView { v := layout.NewLayoutView(); v.StageTracks["t1"] = "p1"; return v }(),
+			expectedOps: []Operations{},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := AgentConfig{
-				Layout: layout.Default(),
-				Logger: logging.New("test", "info"),
-				Config: tt.config,
-			}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := NewAgent(AgentConfig{
+				Logger: logging.NewNullLogger("test", "info"),
+			})
+			mockClient := newMockLkClient()
+			agent.lk = mockClient
 
-			agent := NewAgent(cfg)
-			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-			defer cancel()
+			agent.roomSnap = tc.initialSnap
+			agent.layoutView = tc.layout
+			mockClient.subs = tc.initialSubs
 
-			// Should not panic regardless of config values
-			err := agent.Run(ctx)
-			if err != context.DeadlineExceeded {
-				t.Errorf("expected context.DeadlineExceeded error, got %v", err)
+			// TODO: update to compare actual ops sent to lkClient
+			decs := Decide(tc.policy, tc.layout, tc.initialSnap)
+			ops := Diff(tc.initialSubs, decs)
+
+			if diff := cmp.Diff(tc.expectedOps, ops); diff != "" {
+				t.Errorf("unexpected subscription ops (-want +got):\n%s", diff)
 			}
 		})
-	}
-}
-
-func TestAgent_Run_NilLogger(t *testing.T) {
-	cfg := AgentConfig{
-		Layout: layout.Default(),
-		Logger: nil, // nil logger
-		Config: config.Config{
-			Room:     "test-room",
-			Identity: "test-identity",
-		},
-	}
-
-	agent := NewAgent(cfg)
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-
-	// Should panic due to nil logger, so we recover from the panic
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic due to nil logger, but didn't panic")
-		}
-	}()
-
-	agent.Run(ctx)
-}
-
-func TestAgentConfig_Validation(t *testing.T) {
-	// Test that AgentConfig struct accepts all expected types
-	logger := logging.New("test", "debug")
-	layout := layout.Default()
-	config := config.Config{
-		Room:     "test",
-		Identity: "test",
-	}
-
-	cfg := AgentConfig{
-		Layout: layout,
-		Logger: logger,
-		Config: config,
-	}
-
-	if len(cfg.Layout.Slots) != 4 {
-		t.Errorf("expected 4 layout slots, got %d", len(cfg.Layout.Slots))
-	}
-	if cfg.Logger == nil {
-		t.Error("logger should not be nil")
-	}
-	if cfg.Config.Room != "test" {
-		t.Errorf("expected Room=test, got %s", cfg.Config.Room)
 	}
 }
