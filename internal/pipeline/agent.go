@@ -113,7 +113,7 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
 			lg.Debugf("stopping LiveKit event consumer")
 			return
 		case e := <-a.lk.Events():
-			switch e.(type) {
+			switch evt := e.(type) {
 			case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
 				lg.Infof("received LiveKit event: %s", logging.FormatValue(e))
 				a.evCh <- RoomChangedEvent{LkEvents: []lk.Event{e}}
@@ -138,11 +138,10 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
 				// 	}
 				// }
 			case lk.TrackSubscribed:
-				ev := e.(lk.TrackSubscribed)
-				lg.Infof("TrackSubscribed: %s track %s kind %s", ev.Identity, ev.TID, ev.Kind)
-				// a.onStageTracks[ev.TID] = true // assume subscribed tracks are on stage
+				lg.Infof("TrackSubscribed: %s track %s kind %s", evt.Identity, evt.TID, evt.Kind)
+				// a.onStageTracks[evt.TID] = true // assume subscribed tracks are on stage
 			default:
-				lg.Debugf("ignoring LiveKit event: %s", logging.FormatValue(e))
+				lg.Debugf("ignoring LiveKit event: %s", logging.FormatValue(evt))
 			}
 		default:
 			time.Sleep(100 * time.Millisecond)
