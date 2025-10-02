@@ -7,14 +7,14 @@ import (
 
 type EventType string
 
-type SystemEvent interface { isSystemEvent() }
+type SystemEvent interface{ isSystemEvent() }
 
 type (
-	RoomChangedEvent struct{
+	RoomChangedEvent struct {
 		LkEvents []livekit.Event // can contain multiple coalesced events
 	}
 	LayoutChangedEvent struct{ Layout layout.LayoutView }
 )
 
-func (RoomChangedEvent) isSystemEvent() {}
+func (RoomChangedEvent) isSystemEvent()   {}
 func (LayoutChangedEvent) isSystemEvent() {}

@@ -23,24 +23,24 @@ type lkClient interface {
 	SubscriptionSnapshot() []*lk.Subscription
 }
 
-type Agent struct{
+type Agent struct {
 	cfg AgentConfig
-	lk lkClient
+	lk  lkClient
 
 	// policy Policy // tracks subscription policy
 	// stageTracks map[string]bool // track ID -> onStage
 
 	layoutView *layout.LayoutView // current layout view
-	roomSnap *RoomSnapshot // current room state
+	roomSnap   *RoomSnapshot      // current room state
 
 	evCh chan SystemEvent // internal events
-	tick *time.Ticker // periodic safety reconciliation
+	tick *time.Ticker     // periodic safety reconciliation
 }
 
 func NewAgent(cfg AgentConfig) *Agent {
 	return &Agent{
-		cfg: cfg,
-		roomSnap: NewRoomSnapshot(),
+		cfg:        cfg,
+		roomSnap:   NewRoomSnapshot(),
 		layoutView: layout.NewLayoutView(),
 	}
 }
@@ -114,36 +114,36 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
 			return
 		case e := <-a.lk.Events():
 			switch e.(type) {
-				case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
-					lg.Infof("received LiveKit event: %s", logging.FormatValue(e))
-					a.evCh <- RoomChangedEvent{ LkEvents: []lk.Event{e} }
-					// TODO coalesce multiple ParticipantJoined/Left, TrackPublished/Unpublished events into one RoomChangedEvent
-					// The idea is to pull as many events as possible from the channel without blocking
-					// and then push a single RoomChangedEvent to the event channel.
-					// This way we avoid excessive reconciliations when many participants join/leave or publish/unpublish tracks at once.
-					// Something like this:
-					// for {
-					// 	select {
-					// 	case e2 := <-a.lk.Events():
-					// 		switch e2.(type) {
-					// 		case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
-					// 			lg.Infof("coalescing LiveKit event: %s", logging.FormatValue(e2))
-					// 		default:
-					// 			// push back the event for later processing
-					// 			a.lk.PushBackEvent(e2)
-					// 			break
-					// 		}
-					// 	default:
-					// 		break
-					// 	}
-					// }
-				case lk.TrackSubscribed:
-					ev := e.(lk.TrackSubscribed)
-					lg.Infof("TrackSubscribed: %s track %s kind %s", ev.Identity, ev.TID, ev.Kind)
-					// a.onStageTracks[ev.TID] = true // assume subscribed tracks are on stage
-				default:
-					lg.Debugf("ignoring LiveKit event: %s", logging.FormatValue(e))
-				}
+			case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
+				lg.Infof("received LiveKit event: %s", logging.FormatValue(e))
+				a.evCh <- RoomChangedEvent{LkEvents: []lk.Event{e}}
+				// TODO coalesce multiple ParticipantJoined/Left, TrackPublished/Unpublished events into one RoomChangedEvent
+				// The idea is to pull as many events as possible from the channel without blocking
+				// and then push a single RoomChangedEvent to the event channel.
+				// This way we avoid excessive reconciliations when many participants join/leave or publish/unpublish tracks at once.
+				// Something like this:
+				// for {
+				// 	select {
+				// 	case e2 := <-a.lk.Events():
+				// 		switch e2.(type) {
+				// 		case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
+				// 			lg.Infof("coalescing LiveKit event: %s", logging.FormatValue(e2))
+				// 		default:
+				// 			// push back the event for later processing
+				// 			a.lk.PushBackEvent(e2)
+				// 			break
+				// 		}
+				// 	default:
+				// 		break
+				// 	}
+				// }
+			case lk.TrackSubscribed:
+				ev := e.(lk.TrackSubscribed)
+				lg.Infof("TrackSubscribed: %s track %s kind %s", ev.Identity, ev.TID, ev.Kind)
+				// a.onStageTracks[ev.TID] = true // assume subscribed tracks are on stage
+			default:
+				lg.Debugf("ignoring LiveKit event: %s", logging.FormatValue(e))
+			}
 		default:
 			time.Sleep(100 * time.Millisecond)
 		}
@@ -169,7 +169,11 @@ func (a *Agent) applyEvent(ev SystemEvent) {
 					continue
 				}
 			case lk.TrackUnpublished:
-				a.roomSnap.DeleteTrack(lkE.PID, lkE.TID)
+				err := a.roomSnap.DeleteTrack(lkE.PID, lkE.TID)
+				if err != nil {
+					a.cfg.Logger.Errorf("TrackUnpublished error: %v", err)
+					continue
+				}
 			default:
 				a.cfg.Logger.Debugf("ignoring LiveKit event in RoomChangedEvent: %s", logging.FormatValue(lkE))
 			}
@@ -204,4 +208,3 @@ func (a *Agent) reconcileState(ctx context.Context) {
 		// TODO apply the change via LiveKit client
 	}
 }
-

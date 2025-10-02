@@ -12,9 +12,9 @@ type LayoutView struct {
 }
 
 type Slot struct {
-	Id	    int		  `json:"id,omitempty"`
-	TrackID string  `json:"trackId,omitempty"`
-	Rect    Rect    `json:"rect"`
+	Id      int      `json:"id,omitempty"`
+	TrackID string   `json:"trackId,omitempty"`
+	Rect    Rect     `json:"rect"`
 	Effects []string `json:"effects,omitempty"`
 }
 

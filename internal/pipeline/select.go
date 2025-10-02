@@ -6,11 +6,12 @@ import (
 )
 
 type DecisionAction string
+
 const (
 	VideoFull DecisionAction = "video-full"
 	VideoLow  DecisionAction = "video-low"
-	Audio DecisionAction = "audio"
-	Paused  DecisionAction = "paused"
+	Audio     DecisionAction = "audio"
+	Paused    DecisionAction = "paused"
 )
 
 type Decision struct {
@@ -40,9 +41,9 @@ type UpdateOp struct {
 	Reason  string
 }
 
-func (o *SubscribeOp) isOperation() {}
+func (o *SubscribeOp) isOperation()   {}
 func (o *UnsubscribeOp) isOperation() {}
-func (o *UpdateOp) isOperation() {}
+func (o *UpdateOp) isOperation()      {}
 
 func (o *SubscribeOp) String() string {
 	return "SubscribeOp{ TrackID: " + o.TrackID + ", Action: " + string(o.Action) + ", Reason: " + o.Reason + " }"
@@ -103,21 +104,21 @@ func Decide(policy *Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) [
 		}
 
 		switch tInfo.Kind {
-			case TrackVideo, TrackScreenShare:
-				desc = append(desc, Decision{TrackID: tid, Action: VideoFull, Reason: "video on stage"})
-			case TrackAudio:
-				desc = append(desc, Decision{TrackID: tid, Action: Audio, Reason: "audio on stage"})
-			default:
-				desc = append(desc, Decision{TrackID: tid, Action: Paused, Reason: "unknown track kind"})
+		case TrackVideo, TrackScreenShare:
+			desc = append(desc, Decision{TrackID: tid, Action: VideoFull, Reason: "video on stage"})
+		case TrackAudio:
+			desc = append(desc, Decision{TrackID: tid, Action: Audio, Reason: "audio on stage"})
+		default:
+			desc = append(desc, Decision{TrackID: tid, Action: Paused, Reason: "unknown track kind"})
 		}
-
-		/// ToDo: Unsubscribe when participant left
 	}
 
 	return desc
 }
 
 func Diff(cur []*livekit.Subscription, decs []Decision) []Operations {
+	/// ToDo: Unsubscribe when participant left
+
 	ops := make([]Operations, 0)
 
 	for _, d := range decs {
@@ -133,16 +134,29 @@ func Diff(cur []*livekit.Subscription, decs []Decision) []Operations {
 
 			if !found {
 				// TODO change the quality layer and update if needed
-				ops = append(ops, &SubscribeOp{ TrackID: d.TrackID, Action: d.Action, Reason: d.Reason } )
+				ops = append(ops, &SubscribeOp{TrackID: d.TrackID, Action: d.Action, Reason: d.Reason})
 			}
 		case Paused:
 			for _, s := range cur {
 				if s.TID == d.TrackID {
-					return []Operations{ &UnsubscribeOp{ TrackID: d.TrackID, Reason: d.Reason } }
+					return []Operations{&UnsubscribeOp{TrackID: d.TrackID, Reason: d.Reason}}
 				}
 			}
 		}
 	}
+
+	// for _, s := range cur {
+	// 	found := false
+	// 	for _, d := range decs {
+	// 		if s.TID == d.TrackID {
+	// 			found = true
+	// 			break
+	// 		}
+	// 	}
+	// 	if !found {
+	// 		ops = append(ops, &UnsubscribeOp{ TrackID: s.TID, Reason: "not in decisions" } )
+	// 	}
+	// }
 
 	return ops
 }

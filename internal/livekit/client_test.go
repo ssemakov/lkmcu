@@ -72,24 +72,27 @@ func TestSubscriptionSnapshot_NilRoomREturnsEmpty(t *testing.T) {
 }
 
 func TestSubscriptionSnapshot_UsesListSubsSeam(t *testing.T) {
-    c := NewClient("ws://x", "k", "s", nil)
-    fake := []*Subscription{
-        {TID: "t1", PID: "p1", Kind: "video", Source: "camera"},
-        {TID: "t2", PID: "p2", Kind: "audio", Source: "mic"},
-    }
-    c.room = &lksdk.Room{}
-    c.listSubs = func(_ *lksdk.Room) []*Subscription { return fake }
+	c := NewClient("ws://x", "k", "s", nil)
+	fake := []*Subscription{
+		{TID: "t1", PID: "p1", Kind: "video", Source: "camera"},
+		{TID: "t2", PID: "p2", Kind: "audio", Source: "mic"},
+	}
+	c.room = &lksdk.Room{}
+	c.listSubs = func(_ *lksdk.Room) []*Subscription { return fake }
 
-    got := c.SubscriptionSnapshot()
+	got := c.SubscriptionSnapshot()
 
-    if len(got) != len(fake) { t.Fatalf("len mismatch") }
+	if len(got) != len(fake) {
+		t.Fatalf("len mismatch")
+	}
 
-		// mutate returned slice; shouldn't affect a second call
-    _ = append(got[:0], got[1:]...)
-    got2 := c.SubscriptionSnapshot()
-    if len(got2) != len(fake) { t.Fatalf("snapshot not independent") }
+	// mutate returned slice; shouldn't affect a second call
+	_ = append(got[:0], got[1:]...)
+	got2 := c.SubscriptionSnapshot()
+	if len(got2) != len(fake) {
+		t.Fatalf("snapshot not independent")
+	}
 }
-
 
 type fakeRP struct{ sid, identity string }
 
@@ -104,8 +107,9 @@ type fakePub struct {
 func (f fakePub) SID() string           { return f.sid }
 func (f fakePub) Kind() lksdk.TrackKind { return f.kind }
 
-type fakeWebRTCTrack struct { Id string; }
-func (f fakeWebRTCTrack) ID() string { return f.Id }
+type fakeWebRTCTrack struct{ Id string }
+
+func (f fakeWebRTCTrack) ID() string                { return f.Id }
 func (f fakeWebRTCTrack) Kind() webrtc.RTPCodecType { return webrtc.RTPCodecTypeVideo }
 
 func newClient() *Client {
@@ -196,69 +200,69 @@ func TestClient_EventHandling(t *testing.T) {
 }
 
 func TestPush_DropOldest(t *testing.T) {
-    c := NewClient("ws://x", "k", "s", &EventOptions{BufferSize: 2, DropPolicy: DropOldest})
+	c := NewClient("ws://x", "k", "s", &EventOptions{BufferSize: 2, DropPolicy: DropOldest})
 
-    c.push(ParticipantJoined{PID: "1"})
-    c.push(ParticipantJoined{PID: "2"})
-    c.push(ParticipantJoined{PID: "3"}) // should drop "1"
+	c.push(ParticipantJoined{PID: "1"})
+	c.push(ParticipantJoined{PID: "2"})
+	c.push(ParticipantJoined{PID: "3"}) // should drop "1"
 
-    got := []Event{<-c.Events(), <-c.Events()}
-    if got[0].(ParticipantJoined).PID != "2" || got[1].(ParticipantJoined).PID != "3" {
-        t.Fatalf("unexpected: %#v", got)
-    }
+	got := []Event{<-c.Events(), <-c.Events()}
+	if got[0].(ParticipantJoined).PID != "2" || got[1].(ParticipantJoined).PID != "3" {
+		t.Fatalf("unexpected: %#v", got)
+	}
 }
 
 func TestPush_Block(t *testing.T) {
-    c := NewClient("ws://x", "k", "s", &EventOptions{BufferSize: 1, DropPolicy: Block})
-    c.push(ParticipantJoined{PID: "1"})
+	c := NewClient("ws://x", "k", "s", &EventOptions{BufferSize: 1, DropPolicy: Block})
+	c.push(ParticipantJoined{PID: "1"})
 
-    blocked := make(chan struct{})
-    go func() {
-        c.push(ParticipantJoined{PID: "2"}) // should block until read
-        close(blocked)
-    }()
+	blocked := make(chan struct{})
+	go func() {
+		c.push(ParticipantJoined{PID: "2"}) // should block until read
+		close(blocked)
+	}()
 
-    select {
-    case <-blocked:
-        t.Fatal("push should block, but it returned early")
-    case <-time.After(50 * time.Millisecond):
-        // still blocked as expected
-    }
+	select {
+	case <-blocked:
+		t.Fatal("push should block, but it returned early")
+	case <-time.After(50 * time.Millisecond):
+		// still blocked as expected
+	}
 
-    <-c.Events()
-    select {
-    case <-blocked: // now writer should have completed
-    case <-time.After(200 * time.Millisecond):
-        t.Fatal("push remained blocked after space available")
-    }
+	<-c.Events()
+	select {
+	case <-blocked: // now writer should have completed
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("push remained blocked after space available")
+	}
 }
 
 func TestClose_BufferedEventsRemainReadable(t *testing.T) {
-    c := NewClient("ws://x","k","s", &EventOptions{BufferSize: 2, DropPolicy: Block})
+	c := NewClient("ws://x", "k", "s", &EventOptions{BufferSize: 2, DropPolicy: Block})
 
-		c.onParticipantJoined(fakeRP{sid:"1", identity:"a"})
-    c.onParticipantJoined(fakeRP{sid:"2", identity:"b"})
+	c.onParticipantJoined(fakeRP{sid: "1", identity: "a"})
+	c.onParticipantJoined(fakeRP{sid: "2", identity: "b"})
 
-    _ = c.Close()
+	_ = c.Close()
 
-		// can read buffered events after close
-    got1 := <-c.Events()
-    got2 := <-c.Events()
-    if got1.(ParticipantJoined).PID != "1" || got2.(ParticipantJoined).PID != "2" {
-        t.Fatalf("unexpected events: %#v %#v", got1, got2)
-    }
+	// can read buffered events after close
+	got1 := <-c.Events()
+	got2 := <-c.Events()
+	if got1.(ParticipantJoined).PID != "1" || got2.(ParticipantJoined).PID != "2" {
+		t.Fatalf("unexpected events: %#v %#v", got1, got2)
+	}
 }
 
 func TestClose_NoNewEventsAfter(t *testing.T) {
-    c := NewClient("ws://x","k","s", &EventOptions{BufferSize: 1, DropPolicy: Block})
-    _ = c.Close()
+	c := NewClient("ws://x", "k", "s", &EventOptions{BufferSize: 1, DropPolicy: Block})
+	_ = c.Close()
 
-    c.onParticipantJoined(fakeRP{sid:"3", identity:"c"})
+	c.onParticipantJoined(fakeRP{sid: "3", identity: "c"})
 
-    select {
-    case e := <-c.Events():
-        t.Fatalf("unexpected event after Close: %#v", e)
-    case <-time.After(50 * time.Millisecond):
-        // good: nothing produced
-    }
+	select {
+	case e := <-c.Events():
+		t.Fatalf("unexpected event after Close: %#v", e)
+	case <-time.After(50 * time.Millisecond):
+		// good: nothing produced
+	}
 }

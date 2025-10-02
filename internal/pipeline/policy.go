@@ -4,8 +4,8 @@ package pipeline
 // and limit the number of video decoders
 // Should be set by the outside configuration
 type Policy struct {
-	IncludeKinds []TrackKind
-	ExcludeKinds []TrackKind
+	IncludeKinds     []TrackKind
+	ExcludeKinds     []TrackKind
 	MaxVideoDecoders int
 }
 

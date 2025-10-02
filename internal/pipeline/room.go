@@ -6,9 +6,10 @@ import (
 )
 
 type TrackKind string
+
 const (
-	TrackAudio      TrackKind = "audio"
-	TrackVideo      TrackKind = "video"
+	TrackAudio       TrackKind = "audio"
+	TrackVideo       TrackKind = "video"
 	TrackScreenShare TrackKind = "screenshare"
 )
 
@@ -27,7 +28,7 @@ type ParticipantInfo struct {
 
 // Current snapshot of the room as we see it
 type RoomSnapshot struct {
-	Tracks 	     map[string]*TrackInfo       // track ID -> info
+	Tracks       map[string]*TrackInfo       // track ID -> info
 	Participants map[string]*ParticipantInfo // participant ID -> info
 	CurrentSubs  map[string]DecisionAction   // track ID -> current decision
 	Version      uint64
@@ -35,10 +36,10 @@ type RoomSnapshot struct {
 
 func NewRoomSnapshot() *RoomSnapshot {
 	return &RoomSnapshot{
-		Tracks: make(map[string]*TrackInfo),
+		Tracks:       make(map[string]*TrackInfo),
 		Participants: make(map[string]*ParticipantInfo),
-		CurrentSubs: make(map[string]DecisionAction),
-		Version: 0,
+		CurrentSubs:  make(map[string]DecisionAction),
+		Version:      0,
 	}
 }
 
@@ -77,7 +78,7 @@ func (rs *RoomSnapshot) UpsertParticipant(PID string, Identity string) *Particip
 		p.Identity = Identity
 		return p
 	} else {
-		p := &ParticipantInfo{ ID: PID, Identity: Identity }
+		p := &ParticipantInfo{ID: PID, Identity: Identity}
 		rs.Participants[PID] = p
 		return p
 	}
@@ -97,7 +98,7 @@ func (rs *RoomSnapshot) UpsertTrack(PID string, TID string, Kind TrackKind) (*Tr
 		t.Kind = Kind
 		return t, nil
 	} else {
-		t := &TrackInfo{ ID: TID, Kind: Kind, PID: PID }
+		t := &TrackInfo{ID: TID, Kind: Kind, PID: PID}
 		if p.PublishedTracks == nil {
 			p.PublishedTracks = make(map[string]*TrackInfo)
 		}
