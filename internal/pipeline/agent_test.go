@@ -162,7 +162,7 @@ func TestAgent_applyEvent(t *testing.T) {
 }
 
 func TestAgent_reconcileState(t *testing.T) {
-	cases := []struct{
+	cases := []struct {
 		name        string
 		initialSnap *RoomSnapshot
 		initialSubs []*lk.Subscription
