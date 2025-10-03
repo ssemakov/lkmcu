@@ -252,6 +252,16 @@ func TestDiff(t *testing.T) {
 				&SubscribeOp{TrackID: "track2", Action: Audio, Reason: "audio on stage"},
 			},
 		},
+		{
+			name: "unsubscribe from track of left participant",
+			cur: []*livekit.Subscription{
+				{TID: "track1"},
+			},
+			decs: []Decision{},
+			want: []Operations{
+				&UnsubscribeOp{TrackID: "track1", Reason: "not in decisions / participant left"},
+			},
+		},
 	}
 
 	for _, tt := range tests {

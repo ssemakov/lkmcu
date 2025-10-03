@@ -144,10 +144,25 @@ func TestAgent_applyEvent(t *testing.T) {
 	if _, ok := p.PublishedTracks["track-1"]; !ok {
 		t.Fatal("track not found for participant after applyEvent")
 	}
+
+	event = RoomChangedEvent{
+		LkEvents: []lk.Event{
+			lk.ParticipantLeft{PID: "participant-1"},
+		},
+	}
+
+	agent.applyEvent(event)
+
+	if _, ok := agent.roomSnap.Participants["participant-1"]; ok {
+		t.Fatal("participant should be deleted after ParticipantLeft event")
+	}
+	if _, ok := agent.roomSnap.Tracks["track-1"]; ok {
+		t.Fatal("track should be deleted after ParticipantLeft event")
+	}
 }
 
 func TestAgent_reconcileState(t *testing.T) {
-	cases := []struct {
+	cases := []struct{
 		name        string
 		initialSnap *RoomSnapshot
 		initialSubs []*lk.Subscription
@@ -193,6 +208,17 @@ func TestAgent_reconcileState(t *testing.T) {
 			policy:      &Policy{ExcludeKinds: []TrackKind{TrackAudio}},
 			layout:      func() *layout.LayoutView { v := layout.NewLayoutView(); v.StageTracks["t1"] = "p1"; return v }(),
 			expectedOps: []Operations{},
+		},
+		{
+			name: "unsubscribe from track of left participant",
+			initialSnap: func() *RoomSnapshot {
+				s := NewRoomSnapshot()
+				return s
+			}(),
+			initialSubs: []*lk.Subscription{{TID: "t1", PID: "p1"}},
+			policy:      &Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
+			layout:      func() *layout.LayoutView { v := layout.NewLayoutView(); return v }(),
+			expectedOps: []Operations{&UnsubscribeOp{TrackID: "t1", Reason: "not in decisions / participant left"}},
 		},
 	}
 

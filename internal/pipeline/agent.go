@@ -160,7 +160,9 @@ func (a *Agent) applyEvent(ev SystemEvent) {
 			case lk.ParticipantJoined:
 				a.roomSnap.UpsertParticipant(lkE.PID, lkE.Identity)
 			case lk.ParticipantLeft:
-				a.roomSnap.DeleteParticipant(lkE.PID)
+				a.roomSnap.DeleteParticipantAndTracks(lkE.PID)
+				// TODO also unsubscribe from all tracks of this participant w/o waiting for reconciliation
+				// a.roomSnap.RemoveSubsCache(tids)
 			case lk.TrackPublished:
 				_, err := a.roomSnap.UpsertTrack(lkE.PID, lkE.TID, TrackKind(lkE.Kind))
 				if err != nil {
@@ -169,6 +171,7 @@ func (a *Agent) applyEvent(ev SystemEvent) {
 				}
 			case lk.TrackUnpublished:
 				err := a.roomSnap.DeleteTrack(lkE.PID, lkE.TID)
+				// a.roomSnap.RemoveSubsCache(lkE.TID)
 				if err != nil {
 					a.cfg.Logger.Errorf("TrackUnpublished error: %v", err)
 					continue

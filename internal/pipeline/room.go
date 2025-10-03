@@ -88,6 +88,21 @@ func (rs *RoomSnapshot) DeleteParticipant(pid string) {
 	delete(rs.Participants, pid)
 }
 
+func (rs *RoomSnapshot) DeleteParticipantAndTracks(pid string) []string {
+	p, ok := rs.Participants[pid]
+	if !ok {
+		return nil
+	}
+
+	var tids []string
+	for tid := range p.PublishedTracks {
+		tids = append(tids, tid)
+		delete(rs.Tracks, tid)
+	}
+	delete(rs.Participants, pid)
+	return tids
+}
+
 func (rs *RoomSnapshot) UpsertTrack(pid string, tid string, kind TrackKind) (*TrackInfo, error) {
 	p, ok := rs.Participants[pid]
 	if !ok {

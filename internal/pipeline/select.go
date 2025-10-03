@@ -117,10 +117,9 @@ func Decide(policy *Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) [
 }
 
 func Diff(cur []*livekit.Subscription, decs []Decision) []Operations {
-	/// ToDo: Unsubscribe when participant left
-
 	ops := make([]Operations, 0)
 
+	// Subscribe/Update operations
 	for _, d := range decs {
 		switch d.Action {
 		case VideoFull, VideoLow, Audio:
@@ -145,18 +144,16 @@ func Diff(cur []*livekit.Subscription, decs []Decision) []Operations {
 		}
 	}
 
-	// for _, s := range cur {
-	// 	found := false
-	// 	for _, d := range decs {
-	// 		if s.TID == d.TrackID {
-	// 			found = true
-	// 			break
-	// 		}
-	// 	}
-	// 	if !found {
-	// 		ops = append(ops, &UnsubscribeOp{ TrackID: s.TID, Reason: "not in decisions" } )
-	// 	}
-	// }
+	// Unsubscribe operations
+	want := make(map[string]DecisionAction, len(decs))
+	for _, d := range decs {
+		want[d.TrackID] = d.Action
+	}
+	for _, s := range cur {
+		if _, ok := want[s.TID]; !ok {
+			ops = append(ops, &UnsubscribeOp{TrackID: s.TID, Reason: "not in decisions / participant left"})
+		}
+	}
 
 	return ops
 }

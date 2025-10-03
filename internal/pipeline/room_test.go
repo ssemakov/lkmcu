@@ -32,6 +32,30 @@ func TestRoomSnapshot_UpsertAndDeleteParticipant(t *testing.T) {
 	}
 }
 
+func TestRoomSnapshot_DeleteParticipantAndTracks(t *testing.T) {
+	rs := NewRoomSnapshot()
+	pid := "p1"
+	tids := []string{"t1", "t2"}
+
+	rs.UpsertParticipant(pid, "user1")
+	rs.UpsertTrack(pid, tids[0], TrackAudio)
+	rs.UpsertTrack(pid, tids[1], TrackVideo)
+
+	deletedTIDs := rs.DeleteParticipantAndTracks(pid)
+	if _, ok := rs.Participants[pid]; ok {
+		t.Errorf("participant should be deleted")
+	}
+	for _, tid := range tids {
+		if _, ok := rs.Tracks[tid]; ok {
+			t.Errorf("track %s should be deleted", tid)
+		}
+	}
+
+	if len(deletedTIDs) != len(tids) {
+		t.Errorf("expected %d deleted TIDs, got %d", len(tids), len(deletedTIDs))
+	}
+}
+
 func TestRoomSnapshot_UpsertAndDeleteTrack(t *testing.T) {
 	rs := NewRoomSnapshot()
 	pid := "pid2"
