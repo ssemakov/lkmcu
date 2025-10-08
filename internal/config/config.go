@@ -64,7 +64,6 @@ func FromFlags() Config {
 		IncludeKind: *includeKind,
 		ExcludeKind: *excludeKind,
 	}
-
 }
 
 // Resolve merges flags, env vars and defaults into a final Config
@@ -81,7 +80,6 @@ func Resolve(flags Config, env Config, defaults Config) Config {
 		IncludeKind: firstNonEmpty(flags.IncludeKind, env.IncludeKind, defaults.IncludeKind),
 		ExcludeKind: firstNonEmpty(flags.ExcludeKind, env.ExcludeKind, defaults.ExcludeKind),
 	}
-
 }
 
 func env(k, def string) string {

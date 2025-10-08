@@ -72,7 +72,7 @@ func (o *UpdateOp) exec(lk *livekit.Client) error {
 	return nil
 }
 
-func Decide(policy *Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []Decision {
+func Decide(policy Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []Decision {
 	desc := []Decision{}
 
 	for tid, tInfo := range snapshot.Tracks {

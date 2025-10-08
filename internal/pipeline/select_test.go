@@ -12,14 +12,14 @@ import (
 func TestDecide(t *testing.T) {
 	tests := []struct {
 		name     string
-		policy   *Policy
+		policy   Policy
 		layout   *layout.LayoutView
 		snapshot *RoomSnapshot
 		want     []Decision
 	}{
 		{
 			name: "empty snapshot returns empty decisions",
-			policy: &Policy{
+			policy: Policy{
 				IncludeKinds: []TrackKind{TrackVideo, TrackAudio},
 			},
 			layout:   &layout.LayoutView{StageTracks: map[string]string{}},
@@ -28,7 +28,7 @@ func TestDecide(t *testing.T) {
 		},
 		{
 			name:   "track with missing info",
-			policy: &Policy{},
+			policy: Policy{},
 			layout: &layout.LayoutView{StageTracks: map[string]string{"track1": "p1"}},
 			snapshot: &RoomSnapshot{
 				Tracks: map[string]*TrackInfo{
@@ -41,7 +41,7 @@ func TestDecide(t *testing.T) {
 			want: []Decision{}, // should skip track with missing info
 		},
 		{name: "track with missing participant",
-			policy: &Policy{},
+			policy: Policy{},
 			layout: &layout.LayoutView{StageTracks: map[string]string{"track1": "p1"}},
 			snapshot: &RoomSnapshot{
 				Tracks: map[string]*TrackInfo{
@@ -53,7 +53,7 @@ func TestDecide(t *testing.T) {
 		},
 		{
 			name: "excluded track by policy",
-			policy: &Policy{
+			policy: Policy{
 				IncludeKinds: []TrackKind{TrackAudio},
 				ExcludeKinds: []TrackKind{TrackVideo},
 			},
@@ -74,7 +74,7 @@ func TestDecide(t *testing.T) {
 		},
 		{
 			name: "only included tracks by policy",
-			policy: &Policy{
+			policy: Policy{
 				IncludeKinds: []TrackKind{TrackVideo},
 			},
 			layout: &layout.LayoutView{StageTracks: map[string]string{"track1": "p1", "track2": "p1"}},
@@ -94,7 +94,7 @@ func TestDecide(t *testing.T) {
 		},
 		{
 			name: "track not on stage",
-			policy: &Policy{
+			policy: Policy{
 				IncludeKinds: []TrackKind{TrackVideo, TrackAudio},
 			},
 			layout: &layout.LayoutView{StageTracks: map[string]string{"track2": "p1"}},
@@ -112,7 +112,7 @@ func TestDecide(t *testing.T) {
 		},
 		{
 			name: "video track on stage",
-			policy: &Policy{
+			policy: Policy{
 				IncludeKinds: []TrackKind{TrackVideo, TrackAudio},
 			},
 			layout: &layout.LayoutView{StageTracks: map[string]string{"track1": "p1"}},
@@ -130,7 +130,7 @@ func TestDecide(t *testing.T) {
 		},
 		{
 			name: "audio track on stage",
-			policy: &Policy{
+			policy: Policy{
 				IncludeKinds: []TrackKind{TrackVideo, TrackAudio},
 			},
 			layout: &layout.LayoutView{StageTracks: map[string]string{"track1": "p1"}},
@@ -148,7 +148,7 @@ func TestDecide(t *testing.T) {
 		},
 		{
 			name: "multiple tracks with different states",
-			policy: &Policy{
+			policy: Policy{
 				IncludeKinds: []TrackKind{TrackVideo, TrackAudio},
 			},
 			layout: &layout.LayoutView{StageTracks: map[string]string{

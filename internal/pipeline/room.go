@@ -13,6 +13,20 @@ const (
 	TrackScreenShare TrackKind = "screenshare"
 )
 
+func ParseTrackKind(kindStr string) (TrackKind, error) {
+	kind := TrackKind(kindStr)
+	switch kind {
+	case TrackAudio, TrackVideo, TrackScreenShare:
+		return kind, nil
+	default:
+		return "", fmt.Errorf("unknown track kind: %s", kindStr)
+	}
+}
+
+func (k TrackKind) String() string {
+	return string(k)
+}
+
 // Describes a track in the room
 type TrackInfo struct {
 	ID   string

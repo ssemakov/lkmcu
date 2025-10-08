@@ -14,6 +14,7 @@ type AgentConfig struct {
 	Layout layout.Stage
 	Logger logging.Logger
 	Config config.Config
+	Policy Policy
 }
 
 type lkClient interface {
@@ -27,7 +28,6 @@ type Agent struct {
 	cfg AgentConfig
 	lk  lkClient
 
-	// policy Policy // tracks subscription policy
 	// stageTracks map[string]bool // track ID -> onStage
 
 	layoutView *layout.LayoutView // current layout view
@@ -38,6 +38,8 @@ type Agent struct {
 }
 
 func NewAgent(cfg AgentConfig) *Agent {
+	cfg.Policy = NewPolicy(cfg.Config.IncludeKind, cfg.Config.ExcludeKind)
+
 	return &Agent{
 		cfg:        cfg,
 		roomSnap:   NewRoomSnapshot(),
@@ -194,7 +196,7 @@ func (a *Agent) reconcileState(ctx context.Context) {
 	// or we can keep track of dirty PIDs/TIDs in the room snapshot and pass them to Decide
 	// For now we just call full Decide every time
 	// TODO cache decisions on the room snapshot
-	decs := Decide(&Policy{}, a.layoutView, a.roomSnap)
+	decs := Decide(a.cfg.Policy, a.layoutView, a.roomSnap)
 	a.cfg.Logger.Infof("Decisions: %v", logging.FormatValue(decs))
 
 	// Compare with current subscriptions

@@ -166,7 +166,7 @@ func TestAgent_reconcileState(t *testing.T) {
 		name        string
 		initialSnap *RoomSnapshot
 		initialSubs []*lk.Subscription
-		policy      *Policy
+		policy      Policy
 		layout      *layout.LayoutView
 		expectedOps []Operations
 	}{
@@ -179,7 +179,7 @@ func TestAgent_reconcileState(t *testing.T) {
 				return s
 			}(),
 			initialSubs: []*lk.Subscription{},
-			policy:      &Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
+			policy:      Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
 			layout:      func() *layout.LayoutView { v := layout.NewLayoutView(); v.StageTracks["t1"] = "p1"; return v }(),
 			expectedOps: []Operations{&SubscribeOp{TrackID: "t1", Action: VideoFull, Reason: "video on stage"}},
 		},
@@ -192,7 +192,7 @@ func TestAgent_reconcileState(t *testing.T) {
 				return s
 			}(),
 			initialSubs: []*lk.Subscription{{TID: "t1", PID: "p1"}},
-			policy:      &Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
+			policy:      Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
 			layout:      func() *layout.LayoutView { v := layout.NewLayoutView(); v.StageTracks["t1"] = "p1"; return v }(),
 			expectedOps: []Operations{},
 		},
@@ -205,7 +205,7 @@ func TestAgent_reconcileState(t *testing.T) {
 				return s
 			}(),
 			initialSubs: []*lk.Subscription{},
-			policy:      &Policy{ExcludeKinds: []TrackKind{TrackAudio}},
+			policy:      Policy{ExcludeKinds: []TrackKind{TrackAudio}},
 			layout:      func() *layout.LayoutView { v := layout.NewLayoutView(); v.StageTracks["t1"] = "p1"; return v }(),
 			expectedOps: []Operations{},
 		},
@@ -216,7 +216,7 @@ func TestAgent_reconcileState(t *testing.T) {
 				return s
 			}(),
 			initialSubs: []*lk.Subscription{{TID: "t1", PID: "p1"}},
-			policy:      &Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
+			policy:      Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
 			layout:      func() *layout.LayoutView { v := layout.NewLayoutView(); return v }(),
 			expectedOps: []Operations{&UnsubscribeOp{TrackID: "t1", Reason: "not in decisions / participant left"}},
 		},

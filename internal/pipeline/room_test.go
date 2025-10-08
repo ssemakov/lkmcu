@@ -5,6 +5,49 @@ import (
 	"testing"
 )
 
+func TestTrackKind_String(t *testing.T) {
+	tests := []struct {
+		kind TrackKind
+		want string
+	}{
+		{TrackAudio, "audio"},
+		{TrackVideo, "video"},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("kind_%v", tt.kind), func(t *testing.T) {
+			got := tt.kind.String()
+			if got != tt.want {
+				t.Errorf("TrackKind.String() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseTrackKind(t *testing.T) {
+	tests := []struct {
+		str     string
+		want    TrackKind
+		wantErr bool
+	}{
+		{"audio", TrackAudio, false},
+		{"video", TrackVideo, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.str, func(t *testing.T) {
+			got, err := ParseTrackKind(tt.str)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseTrackKind(%q) error = %v, wantErr %v", tt.str, err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("ParseTrackKind(%q) = %v, want %v", tt.str, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRoomSnapshot_UpsertAndDeleteParticipant(t *testing.T) {
 	rs := NewRoomSnapshot()
 	pid := "pid1"
