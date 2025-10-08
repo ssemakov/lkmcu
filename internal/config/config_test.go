@@ -64,40 +64,60 @@ func TestFromFlags(t *testing.T) {
 }
 
 func TestFromEnv(t *testing.T) {
-	t.Setenv("LIVEKIT_URL", "ws://env:7880")
-	t.Setenv("LIVEKIT_API_KEY", "env-key")
-	t.Setenv("LIVEKIT_API_SECRET", "env-secret")
-	t.Setenv("MCU_LOG_LEVEL", "debug")
-	t.Setenv("LIVEKIT_ROOM", "env-room")
-	t.Setenv("MCU_IDENTITY", "env-identity")
-	t.Setenv("MCU_REGION", "env-region")
-	t.Setenv("MCU_HTTP_ADDR", ":8080")
+	os.Setenv("LIVEKIT_URL", "env-url")
+	os.Setenv("LIVEKIT_API_KEY", "env-key")
+	os.Setenv("LIVEKIT_API_SECRET", "env-secret")
+	os.Setenv("MCU_LOG_LEVEL", "debug")
+	os.Setenv("LIVEKIT_ROOM", "env-room")
+	os.Setenv("MCU_IDENTITY", "env-identity")
+	os.Setenv("MCU_REGION", "env-region")
+	os.Setenv("MCU_HTTP_ADDR", ":9999")
+	os.Setenv("MCU_INCLUDE_KIND", "audio,video")
+	os.Setenv("MCU_EXCLUDE_KIND", "screen")
 
-	got := FromEnv()
+	defer func() {
+		os.Unsetenv("LIVEKIT_URL")
+		os.Unsetenv("LIVEKIT_API_KEY")
+		os.Unsetenv("LIVEKIT_API_SECRET")
+		os.Unsetenv("MCU_LOG_LEVEL")
+		os.Unsetenv("LIVEKIT_ROOM")
+		os.Unsetenv("MCU_IDENTITY")
+		os.Unsetenv("MCU_REGION")
+		os.Unsetenv("MCU_HTTP_ADDR")
+		os.Unsetenv("MCU_INCLUDE_KIND")
+		os.Unsetenv("MCU_EXCLUDE_KIND")
+	}()
 
-	if got.LivekitURL != "ws://env:7880" {
-		t.Errorf("want LivekitURL=ws://env:7880, got %q", got.LivekitURL)
+	cfg := FromEnv()
+	if cfg.LivekitURL != "env-url" {
+		t.Errorf("expected LivekitURL=env-url, got %s", cfg.LivekitURL)
 	}
-	if got.APIKey != "env-key" {
-		t.Errorf("want APIKey=env-key, got %q", got.APIKey)
+	if cfg.APIKey != "env-key" {
+		t.Errorf("expected APIKey=env-key, got %s", cfg.APIKey)
 	}
-	if got.APISecret != "env-secret" {
-		t.Errorf("want APISecret=env-secret, got %q", got.APISecret)
+	if cfg.APISecret != "env-secret" {
+		t.Errorf("expected APISecret=env-secret, got %s", cfg.APISecret)
 	}
-	if got.LogLevel != "debug" {
-		t.Errorf("want LogLevel=debug, got %q", got.LogLevel)
+	if cfg.LogLevel != "debug" {
+		t.Errorf("expected LogLevel=debug, got %s", cfg.LogLevel)
 	}
-	if got.Room != "env-room" {
-		t.Errorf("want Room=env-room, got %q", got.Room)
+	if cfg.Room != "env-room" {
+		t.Errorf("expected Room=env-room, got %s", cfg.Room)
 	}
-	if got.Identity != "env-identity" {
-		t.Errorf("want Identity=env-identity, got %q", got.Identity)
+	if cfg.Identity != "env-identity" {
+		t.Errorf("expected Identity=env-identity, got %s", cfg.Identity)
 	}
-	if got.Region != "env-region" {
-		t.Errorf("want Region=env-region, got %q", got.Region)
+	if cfg.Region != "env-region" {
+		t.Errorf("expected Region=env-region, got %s", cfg.Region)
 	}
-	if got.Addr != ":8080" {
-		t.Errorf("want Addr=:8080, got %q", got.Addr)
+	if cfg.Addr != ":9999" {
+		t.Errorf("expected Addr=:9999, got %s", cfg.Addr)
+	}
+	if cfg.IncludeKind != "audio,video" {
+		t.Errorf("expected IncludeKind=audio,video, got %s", cfg.IncludeKind)
+	}
+	if cfg.ExcludeKind != "screen" {
+		t.Errorf("expected ExcludeKind=screen, got %s", cfg.ExcludeKind)
 	}
 }
 
@@ -145,5 +165,76 @@ func TestResolve_AllFields(t *testing.T) {
 	}
 	if got.Identity != "default-identity" {
 		t.Errorf("want Identity=default-identity, got %q", got.Identity)
+	}
+}
+
+func TestResolve(t *testing.T) {
+	flags := Config{
+		LivekitURL:  "flag-url",
+		APIKey:      "flag-key",
+		APISecret:   "flag-secret",
+		LogLevel:    "info",
+		Room:        "flag-room",
+		Identity:    "flag-identity",
+		Region:      "flag-region",
+		Addr:        ":8888",
+		IncludeKind: "audio",
+		ExcludeKind: "video",
+	}
+	env := Config{
+		LivekitURL:  "env-url",
+		APIKey:      "env-key",
+		APISecret:   "env-secret",
+		LogLevel:    "debug",
+		Room:        "env-room",
+		Identity:    "env-identity",
+		Region:      "env-region",
+		Addr:        ":9999",
+		IncludeKind: "audio,video",
+		ExcludeKind: "screen",
+	}
+	def := Config{
+		LivekitURL:  "def-url",
+		APIKey:      "def-key",
+		APISecret:   "def-secret",
+		LogLevel:    "error",
+		Room:        "def-room",
+		Identity:    "def-identity",
+		Region:      "def-region",
+		Addr:        ":7777",
+		IncludeKind: "video",
+		ExcludeKind: "",
+	}
+
+	cfg := Resolve(flags, env, def)
+	if cfg.LivekitURL != "flag-url" {
+		t.Errorf("expected LivekitURL=flag-url, got %s", cfg.LivekitURL)
+	}
+	if cfg.APIKey != "flag-key" {
+		t.Errorf("expected APIKey=flag-key, got %s", cfg.APIKey)
+	}
+	if cfg.APISecret != "flag-secret" {
+		t.Errorf("expected APISecret=flag-secret, got %s", cfg.APISecret)
+	}
+	if cfg.LogLevel != "info" {
+		t.Errorf("expected LogLevel=info, got %s", cfg.LogLevel)
+	}
+	if cfg.Room != "flag-room" {
+		t.Errorf("expected Room=flag-room, got %s", cfg.Room)
+	}
+	if cfg.Identity != "flag-identity" {
+		t.Errorf("expected Identity=flag-identity, got %s", cfg.Identity)
+	}
+	if cfg.Region != "flag-region" {
+		t.Errorf("expected Region=flag-region, got %s", cfg.Region)
+	}
+	if cfg.Addr != ":8888" {
+		t.Errorf("expected Addr=:8888, got %s", cfg.Addr)
+	}
+	if cfg.IncludeKind != "audio" {
+		t.Errorf("expected IncludeKind=audio, got %s", cfg.IncludeKind)
+	}
+	if cfg.ExcludeKind != "video" {
+		t.Errorf("expected ExcludeKind=video, got %s", cfg.ExcludeKind)
 	}
 }

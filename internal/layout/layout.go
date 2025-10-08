@@ -6,6 +6,18 @@ import (
 	"net/http"
 )
 
+// Basic view of the layout, which tracks are on stage, will be extended later
+type LayoutView struct {
+	StageTracks map[string]string // track ID -> participant ID, can have both audio and video tracks
+}
+
+type Slot struct {
+	Id      int      `json:"id,omitempty"`
+	TrackID string   `json:"trackId,omitempty"`
+	Rect    Rect     `json:"rect"`
+	Effects []string `json:"effects,omitempty"`
+}
+
 type Rect struct {
 	X float32 `json:"x"`
 	Y float32 `json:"y"`
@@ -25,6 +37,12 @@ func Default() Stage {
 		{X: 0, Y: 0.5, W: 0.5, H: 0.5, Z: 0},
 		{X: 0.5, Y: 0.5, W: 0.5, H: 0.5, Z: 0},
 	}}
+}
+
+func NewLayoutView() *LayoutView {
+	return &LayoutView{
+		StageTracks: make(map[string]string),
+	}
 }
 
 func HTTPHandler(stage *Stage, w http.ResponseWriter, r *http.Request) {
