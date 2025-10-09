@@ -11,7 +11,6 @@ import (
 )
 
 type AgentConfig struct {
-	Layout layout.Stage
 	Logger logging.Logger
 	Config config.Config
 	Policy Policy
@@ -37,13 +36,13 @@ type Agent struct {
 	tick *time.Ticker     // periodic safety reconciliation
 }
 
-func NewAgent(cfg AgentConfig) *Agent {
+func NewAgent(cfg AgentConfig, l *layout.LayoutView) *Agent {
 	cfg.Policy = NewPolicy(cfg.Config.IncludeKind, cfg.Config.ExcludeKind)
 
 	return &Agent{
 		cfg:        cfg,
 		roomSnap:   NewRoomSnapshot(),
-		layoutView: layout.NewLayoutView(),
+		layoutView: l,
 	}
 }
 

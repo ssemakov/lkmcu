@@ -96,8 +96,16 @@ func Decide(policy Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []
 			continue
 		}
 
-		// track on stage?
-		_, onStage := layout.StageTracks[tid]
+		// track on stage? // either check CurrenStage slots or update StageTracks on layout change
+		_, onStage := layout.StageTracks[tid]                  // check if the track is on stage
+		_, onStage := layout.StageParticipants[pInfo.Identity] // check if the participant is on stage
+		for _, tk := range layout.StageParticipants[pInfo.Identity] {
+			if tk == tInfo.Kind {
+				onStage = true
+				break
+			}
+		}
+
 		if !onStage {
 			desc = append(desc, Decision{TrackID: tid, Action: Paused, Reason: "not on stage"})
 			continue
