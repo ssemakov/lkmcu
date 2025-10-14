@@ -8,8 +8,8 @@ import (
 
 // Basic view of the layout, which tracks are on stage, will be extended later
 type LayoutView struct {
-	StageTracks       map[string]string   // track ID -> participant ID, can have both audio and video tracks
-	StageParticipants map[string][]string // participant ID -> [audio track ID, video track ID, screen track ID]s
+	StageTracks       map[string]string   // Track SID -> participant SID, can have multiple tracks from same participant
+	StageParticipants map[string][]string // participant Identity -> allowed kinds ("audio","video","screenshare")
 	CurentStage       *Stage
 }
 
@@ -87,6 +87,11 @@ func parseStage(jsonStr string) (*Stage, error) {
 	return &s, nil
 }
 
+// StageParticipantsFromStageLayout extracts participant information from a Stage layout.
+// It returns a map where keys are participant identities and values are arrays of track kinds
+// (e.g., "audio", "video", "screenshare") that each participant has in the stage layout.
+// This is used to determine which participants and which of their track types should be included
+// in the composed output.
 func StageParticipantsFromStageLayout(s *Stage) map[string][]string {
 	participants := make(map[string][]string)
 

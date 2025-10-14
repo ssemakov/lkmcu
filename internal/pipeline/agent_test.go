@@ -14,7 +14,6 @@ import (
 
 func TestNewAgent(t *testing.T) {
 	cfg := AgentConfig{
-		Layout: layout.Default(),
 		Logger: logging.NewNullLogger("test", "info"),
 		Config: config.Config{
 			Room:       "test-room",
@@ -25,7 +24,7 @@ func TestNewAgent(t *testing.T) {
 		},
 	}
 
-	agent := NewAgent(cfg)
+	agent := NewAgent(cfg, layout.DefaultLayoutView())
 
 	if agent == nil {
 		t.Fatal("NewAgent returned nil")
@@ -50,7 +49,6 @@ func TestNewAgent(t *testing.T) {
 
 func TestAgent_Run_ContextCancellation(t *testing.T) {
 	cfg := AgentConfig{
-		Layout: layout.Default(),
 		Logger: logging.NewNullLogger("test", "info"),
 		Config: config.Config{
 			Room:       "test-room",
@@ -61,7 +59,7 @@ func TestAgent_Run_ContextCancellation(t *testing.T) {
 		},
 	}
 
-	agent := NewAgent(cfg)
+	agent := NewAgent(cfg, layout.DefaultLayoutView())
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Cancel context immediately to test cancellation behavior
@@ -75,7 +73,6 @@ func TestAgent_Run_ContextCancellation(t *testing.T) {
 
 func TestAgent_Run_ContextTimeout(t *testing.T) {
 	cfg := AgentConfig{
-		Layout: layout.Default(),
 		Logger: logging.NewNullLogger("test", "info"),
 		Config: config.Config{
 			Room:       "test-room",
@@ -86,7 +83,7 @@ func TestAgent_Run_ContextTimeout(t *testing.T) {
 		},
 	}
 
-	agent := NewAgent(cfg)
+	agent := NewAgent(cfg, layout.DefaultLayoutView())
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
@@ -125,7 +122,7 @@ func (m *mockLkClient) SubscriptionSnapshot() []*lk.Subscription { return m.subs
 func TestAgent_applyEvent(t *testing.T) {
 	agent := NewAgent(AgentConfig{
 		Logger: logging.NewNullLogger("test", "info"),
-	})
+	}, layout.DefaultLayoutView())
 
 	event := RoomChangedEvent{
 		LkEvents: []lk.Event{
@@ -180,7 +177,7 @@ func TestAgent_reconcileState(t *testing.T) {
 			}(),
 			initialSubs: []*lk.Subscription{},
 			policy:      Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
-			layout:      func() *layout.LayoutView { v := layout.NewLayoutView(); v.StageTracks["t1"] = "p1"; return v }(),
+			layout:      func() *layout.LayoutView { v, _ := layout.NewLayoutView(""); v.StageTracks["t1"] = "p1"; return v }(),
 			expectedOps: []Operations{&SubscribeOp{TrackID: "t1", Action: VideoFull, Reason: "video on stage"}},
 		},
 		{
@@ -193,7 +190,7 @@ func TestAgent_reconcileState(t *testing.T) {
 			}(),
 			initialSubs: []*lk.Subscription{{TID: "t1", PID: "p1"}},
 			policy:      Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
-			layout:      func() *layout.LayoutView { v := layout.NewLayoutView(); v.StageTracks["t1"] = "p1"; return v }(),
+			layout:      func() *layout.LayoutView { v, _ := layout.NewLayoutView(""); v.StageTracks["t1"] = "p1"; return v }(),
 			expectedOps: []Operations{},
 		},
 		{
@@ -206,7 +203,7 @@ func TestAgent_reconcileState(t *testing.T) {
 			}(),
 			initialSubs: []*lk.Subscription{},
 			policy:      Policy{ExcludeKinds: []TrackKind{TrackAudio}},
-			layout:      func() *layout.LayoutView { v := layout.NewLayoutView(); v.StageTracks["t1"] = "p1"; return v }(),
+			layout:      func() *layout.LayoutView { v, _ := layout.NewLayoutView(""); v.StageTracks["t1"] = "p1"; return v }(),
 			expectedOps: []Operations{},
 		},
 		{
@@ -217,7 +214,7 @@ func TestAgent_reconcileState(t *testing.T) {
 			}(),
 			initialSubs: []*lk.Subscription{{TID: "t1", PID: "p1"}},
 			policy:      Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
-			layout:      func() *layout.LayoutView { v := layout.NewLayoutView(); return v }(),
+			layout:      func() *layout.LayoutView { v, _ := layout.NewLayoutView(""); return v }(),
 			expectedOps: []Operations{&UnsubscribeOp{TrackID: "t1", Reason: "not in decisions / participant left"}},
 		},
 	}
@@ -226,12 +223,11 @@ func TestAgent_reconcileState(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			agent := NewAgent(AgentConfig{
 				Logger: logging.NewNullLogger("test", "info"),
-			})
+			}, tc.layout)
 			mockClient := newMockLkClient()
 			agent.lk = mockClient
 
 			agent.roomSnap = tc.initialSnap
-			agent.layoutView = tc.layout
 			mockClient.subs = tc.initialSubs
 
 			// TODO: update to compare actual ops sent to lkClient

@@ -27,24 +27,33 @@ func (k TrackKind) String() string {
 	return string(k)
 }
 
-// Describes a track in the room
+// TrackInfo describes a published track (LiveKit concepts).
+// - TrackSID: Track SID (“TR…”), server-generated opaque ID.
+// - ParticipantSID: Participant SID (“PA…”) of the track owner.
 type TrackInfo struct {
-	ID   string
-	Kind TrackKind
-	PID  string // participant ID
+	TrackSID       string    // Track SID (LiveKit TR_XXXX)
+	Kind           TrackKind // audio | video | screenshare
+	ParticipantSID string    // Participant SID (LiveKit PA_XXXX)
 }
 
+// ParticipantInfo mirrors LiveKit participant metadata.
+// - ID: Participant SID (“PA…”), server-generated opaque ID.
+// - Identity: participant identity (app-defined, stable), used for UI/layout logic.
 type ParticipantInfo struct {
-	ID              string
-	Identity        string
+	ParticipantSID  string                // Participant SID (LiveKit PA_XXXX)
+	Identity        string                // Participant identity (LiveKit Identity)
 	PublishedTracks map[string]*TrackInfo // track ID -> info
 }
 
-// Current snapshot of the room as we see it
+// RoomSnapshot is the current view of the room for selection logic.
+// Map key semantics:
+// - Tracks: keyed by trackKey (prefer Track SID). Decide() returns trackKey in its output.
+// - Participants: keyed by Participant SID (matches TrackInfo.ParticipantSID).
+// - CurrentSubs: current decisions, keyed by trackKey.
 type RoomSnapshot struct {
-	Tracks       map[string]*TrackInfo       // track ID -> info
-	Participants map[string]*ParticipantInfo // participant ID -> info
-	CurrentSubs  map[string]DecisionAction   // track ID -> current decision
+	Tracks       map[string]*TrackInfo       // Track SID -> info
+	Participants map[string]*ParticipantInfo // Participant SID (matches TrackInfo.ParticipantSID) -> info
+	CurrentSubs  map[string]DecisionAction   // Track SID -> current decision
 	Version      uint64
 }
 
@@ -62,7 +71,7 @@ func (t *TrackInfo) Format() string {
 	if t == nil {
 		return "<nil>"
 	}
-	return fmt.Sprintf("TrackInfo{ID:%s Kind:%s PID:%s}", t.ID, t.Kind, t.PID)
+	return fmt.Sprintf("TrackInfo{SID:%s Kind:%s ParticipantSID:%s}", t.TrackSID, t.Kind, t.ParticipantSID)
 }
 
 func (p *ParticipantInfo) Format() string {
@@ -73,7 +82,7 @@ func (p *ParticipantInfo) Format() string {
 	for tid, t := range p.PublishedTracks {
 		tracks = append(tracks, fmt.Sprintf("%s:%s", tid, t.Format()))
 	}
-	return fmt.Sprintf("ParticipantInfo{ID:%s Identity:%s PublishedTracks:{%s}}", p.ID, p.Identity, strings.Join(tracks, " "))
+	return fmt.Sprintf("ParticipantInfo{SID:%s Identity:%s PublishedTracks:{%s}}", p.ParticipantSID, p.Identity, strings.Join(tracks, " "))
 }
 
 func (rs *RoomSnapshot) Format() string {
@@ -92,7 +101,7 @@ func (rs *RoomSnapshot) UpsertParticipant(pid string, identity string) *Particip
 		p.Identity = identity
 		return p
 	} else {
-		p := &ParticipantInfo{ID: pid, Identity: identity}
+		p := &ParticipantInfo{ParticipantSID: pid, Identity: identity}
 		rs.Participants[pid] = p
 		return p
 	}
@@ -127,7 +136,7 @@ func (rs *RoomSnapshot) UpsertTrack(pid string, tid string, kind TrackKind) (*Tr
 		t.Kind = kind
 		return t, nil
 	} else {
-		t := &TrackInfo{ID: tid, Kind: kind, PID: pid}
+		t := &TrackInfo{TrackSID: tid, Kind: kind, ParticipantSID: pid}
 		if p.PublishedTracks == nil {
 			p.PublishedTracks = make(map[string]*TrackInfo)
 		}

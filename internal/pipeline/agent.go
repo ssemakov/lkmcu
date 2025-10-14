@@ -183,6 +183,7 @@ func (a *Agent) applyEvent(ev SystemEvent) {
 		}
 	case LayoutChangedEvent:
 		// Update room layout snapshot
+		// updater layout Tracks and Participants maps
 	}
 }
 

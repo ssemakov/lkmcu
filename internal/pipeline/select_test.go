@@ -35,7 +35,7 @@ func TestDecide(t *testing.T) {
 					"track1": nil,
 				},
 				Participants: map[string]*ParticipantInfo{
-					"p1": {ID: "p1"},
+					"p1": {ParticipantSID: "p1"},
 				},
 			},
 			want: []Decision{}, // should skip track with missing info
@@ -45,7 +45,7 @@ func TestDecide(t *testing.T) {
 			layout: &layout.LayoutView{StageTracks: map[string]string{"track1": "p1"}},
 			snapshot: &RoomSnapshot{
 				Tracks: map[string]*TrackInfo{
-					"track1": {PID: "p1", Kind: TrackVideo},
+					"track1": {ParticipantSID: "p1", Kind: TrackVideo},
 				},
 				Participants: map[string]*ParticipantInfo{},
 			},
@@ -60,11 +60,11 @@ func TestDecide(t *testing.T) {
 			layout: &layout.LayoutView{StageTracks: map[string]string{"track1": "p1", "track2": "p1"}},
 			snapshot: &RoomSnapshot{
 				Tracks: map[string]*TrackInfo{
-					"track1": {PID: "p1", Kind: TrackVideo},
-					"track2": {PID: "p1", Kind: TrackAudio},
+					"track1": {ParticipantSID: "p1", Kind: TrackVideo},
+					"track2": {ParticipantSID: "p1", Kind: TrackAudio},
 				},
 				Participants: map[string]*ParticipantInfo{
-					"p1": {ID: "p1"},
+					"p1": {ParticipantSID: "p1"},
 				},
 			},
 			want: []Decision{
@@ -80,11 +80,11 @@ func TestDecide(t *testing.T) {
 			layout: &layout.LayoutView{StageTracks: map[string]string{"track1": "p1", "track2": "p1"}},
 			snapshot: &RoomSnapshot{
 				Tracks: map[string]*TrackInfo{
-					"track1": {PID: "p1", Kind: TrackVideo},
-					"track2": {PID: "p1", Kind: TrackAudio},
+					"track1": {ParticipantSID: "p1", Kind: TrackVideo},
+					"track2": {ParticipantSID: "p1", Kind: TrackAudio},
 				},
 				Participants: map[string]*ParticipantInfo{
-					"p1": {ID: "p1"},
+					"p1": {ParticipantSID: "p1"},
 				},
 			},
 			want: []Decision{
@@ -100,10 +100,10 @@ func TestDecide(t *testing.T) {
 			layout: &layout.LayoutView{StageTracks: map[string]string{"track2": "p1"}},
 			snapshot: &RoomSnapshot{
 				Tracks: map[string]*TrackInfo{
-					"track1": {PID: "p1", Kind: TrackVideo},
+					"track1": {ParticipantSID: "p1", Kind: TrackVideo},
 				},
 				Participants: map[string]*ParticipantInfo{
-					"p1": {ID: "p1"},
+					"p1": {ParticipantSID: "p1"},
 				},
 			},
 			want: []Decision{
@@ -118,14 +118,30 @@ func TestDecide(t *testing.T) {
 			layout: &layout.LayoutView{StageTracks: map[string]string{"track1": "p1"}},
 			snapshot: &RoomSnapshot{
 				Tracks: map[string]*TrackInfo{
-					"track1": {PID: "p1", Kind: TrackVideo},
+					"track1": {ParticipantSID: "p1", Kind: TrackVideo},
 				},
 				Participants: map[string]*ParticipantInfo{
-					"p1": {ID: "p1"},
+					"p1": {ParticipantSID: "p1"},
 				},
 			},
 			want: []Decision{
 				{TrackID: "track1", Action: VideoFull, Reason: "video on stage"},
+			},
+		},
+		{
+			name:   "participant with track kind video is on stage",
+			policy: Policy{},
+			layout: &layout.LayoutView{StageParticipants: map[string][]string{"participant1": {"video"}}},
+			snapshot: &RoomSnapshot{
+				Tracks: map[string]*TrackInfo{
+					"t_123": {ParticipantSID: "p_123", TrackSID: "t_123", Kind: TrackVideo},
+				},
+				Participants: map[string]*ParticipantInfo{
+					"p_123": {ParticipantSID: "p_123", Identity: "participant1"},
+				},
+			},
+			want: []Decision{
+				{TrackID: "t_123", Action: VideoFull, Reason: "video on stage"},
 			},
 		},
 		{
@@ -136,10 +152,10 @@ func TestDecide(t *testing.T) {
 			layout: &layout.LayoutView{StageTracks: map[string]string{"track1": "p1"}},
 			snapshot: &RoomSnapshot{
 				Tracks: map[string]*TrackInfo{
-					"track1": {PID: "p1", Kind: TrackAudio},
+					"track1": {ParticipantSID: "p1", Kind: TrackAudio},
 				},
 				Participants: map[string]*ParticipantInfo{
-					"p1": {ID: "p1"},
+					"p1": {ParticipantSID: "p1"},
 				},
 			},
 			want: []Decision{
@@ -157,13 +173,13 @@ func TestDecide(t *testing.T) {
 			}},
 			snapshot: &RoomSnapshot{
 				Tracks: map[string]*TrackInfo{
-					"video1": {PID: "p1", Kind: TrackVideo},
-					"audio1": {PID: "p1", Kind: TrackAudio},
-					"video2": {PID: "p2", Kind: TrackVideo},
+					"video1": {ParticipantSID: "p1", Kind: TrackVideo},
+					"audio1": {ParticipantSID: "p1", Kind: TrackAudio},
+					"video2": {ParticipantSID: "p2", Kind: TrackVideo},
 				},
 				Participants: map[string]*ParticipantInfo{
-					"p1": {ID: "p1"},
-					"p2": {ID: "p2"},
+					"p1": {ParticipantSID: "p1"},
+					"p2": {ParticipantSID: "p2"},
 				},
 			},
 			want: []Decision{
@@ -188,7 +204,7 @@ func TestDecide(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := Decide(tt.policy, tt.layout, tt.snapshot)
 			if diff := cmp.Diff(tt.want, got, sorter); diff != "" {
-				t.Errorf("Decide() mismatch (-want +got):\n%s", diff)
+				t.Errorf("Decide(): test '%v' mismatch (-want +got):\n%s", tt.name, diff)
 			}
 		})
 	}
