@@ -158,6 +158,31 @@ func TestAgent_applyEvent(t *testing.T) {
 	}
 }
 
+func TestAgent_applyEvent_LayoutChanged(t *testing.T) {
+	agent := NewAgent(AgentConfig{
+		Logger: logging.NewNullLogger("test", "info"),
+	}, layout.DefaultLayoutView())
+
+	stage := &layout.Stage{Slots: []layout.Slot{{Identity: "alice", TrackKind: "video"}}}
+
+	agent.applyEvent(LayoutChangedEvent{Stage: stage})
+
+	snap := agent.layoutView.Snapshot()
+
+	if snap.CurrentStage != stage {
+		t.Fatal("expected CurrentStage pointer to match stage from event")
+	}
+
+	kinds, ok := snap.StageParticipants["alice"]
+	if !ok {
+		t.Fatalf("expected alice in StageParticipants")
+	}
+
+	if len(kinds) != 1 || kinds[0] != "video" {
+		t.Fatalf("unexpected kinds for alice: %#v", kinds)
+	}
+}
+
 func TestAgent_reconcileState(t *testing.T) {
 	cases := []struct {
 		name        string
