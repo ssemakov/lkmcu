@@ -42,8 +42,8 @@ func TestNewAgent(t *testing.T) {
 	if agent.layoutView == nil {
 		t.Error("expected non-nil layout view")
 	}
-	if agent.evCh != nil {
-		t.Error("expected nil event channel before Run()")
+	if agent.evCh == nil {
+		t.Error("expected event channel to be set before Run()")
 	}
 }
 

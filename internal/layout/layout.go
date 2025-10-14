@@ -2,15 +2,19 @@ package layout
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
+	"sync"
 )
 
 // Basic view of the layout, which tracks are on stage, will be extended later
 type LayoutView struct {
 	StageTracks       map[string]string   // Track SID -> participant SID, can have multiple tracks from same participant
 	StageParticipants map[string][]string // participant Identity -> allowed kinds ("audio","video","screenshare")
-	CurentStage       *Stage
+	CurrentStage      *Stage
+	mu                sync.RWMutex
 }
 
 // Stage Slot
@@ -51,7 +55,7 @@ func DefaultLayoutView() *LayoutView {
 	return &LayoutView{
 		StageTracks:       make(map[string]string),
 		StageParticipants: make(map[string][]string),
-		CurentStage:       DefaultStage(),
+		CurrentStage:      DefaultStage(),
 	}
 }
 
@@ -72,9 +76,44 @@ func NewLayoutView(initialStage string) (*LayoutView, error) {
 
 	return &LayoutView{
 		StageTracks:       make(map[string]string),
-		CurentStage:       s,
+		CurrentStage:      s,
 		StageParticipants: StageParticipantsFromStageLayout(s),
 	}, nil
+}
+
+// Snapshot returns a copy of the current layout view that can be safely read
+// without holding locks. Maps are shallow-copied, and slice values in
+// StageParticipants are copied to avoid shared mutation.
+func (l *LayoutView) Snapshot() *LayoutView {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	st := make(map[string]string, len(l.StageTracks))
+	for k, v := range l.StageTracks {
+		st[k] = v
+	}
+
+	sp := make(map[string][]string, len(l.StageParticipants))
+	for pid, kinds := range l.StageParticipants {
+		cp := make([]string, len(kinds))
+		copy(cp, kinds)
+		sp[pid] = cp
+	}
+
+	return &LayoutView{
+		StageTracks:       st,
+		StageParticipants: sp,
+		CurrentStage:      l.CurrentStage,
+	}
+}
+
+// UpdateFromStage sets the current stage and recomputes StageParticipants.
+// It acquires a write lock to make the update atomic.
+func (l *LayoutView) UpdateFromStage(s *Stage) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.CurrentStage = s
+	l.StageParticipants = StageParticipantsFromStageLayout(s)
 }
 
 func parseStage(jsonStr string) (*Stage, error) {
@@ -104,7 +143,27 @@ func StageParticipantsFromStageLayout(s *Stage) map[string][]string {
 	return participants
 }
 
-func HTTPHandler(stage *Stage, w http.ResponseWriter, r *http.Request) {
+func (r Rect) String() string {
+	return fmt.Sprintf("Rect {X:%.2f Y:%.2f W:%.2f H:%.2f Z:%d}", r.X, r.Y, r.W, r.H, r.Z)
+}
+
+func (s Slot) String() string {
+	return fmt.Sprintf("Slot {TrackID:%s Identity:%s TrackKind:%s %v}", s.TrackID, s.Identity, s.TrackKind, s.Rect)
+}
+
+func (s Stage) String() string {
+	var slots []string
+	for _, slot := range s.Slots {
+		slots = append(slots, slot.String())
+	}
+	return fmt.Sprintf("Stage {Slots:[%s]}", strings.Join(slots, ", "))
+}
+
+// OnUpdateFunc is an optional callback invoked after a successful layout update.
+// It receives the newly applied Stage.
+type OnUpdateFunc func(newStage *Stage)
+
+func HTTPHandler(stage *Stage, onUpdate OnUpdateFunc, w http.ResponseWriter, r *http.Request) error {
 	switch r.Method {
 	case http.MethodGet:
 		w.Header().Set("Content-Type", "application/json")
@@ -115,11 +174,16 @@ func HTTPHandler(stage *Stage, w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal(body, &s); err != nil || len(s.Slots) == 0 {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte("invalid layout"))
-			return
+			return err
 		}
-		*stage = s
+		// Do not mutate the provided stage pointer here; delegate to callback/agent.
+		if onUpdate != nil {
+			onUpdate(&s)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+
+	return nil
 }

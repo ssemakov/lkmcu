@@ -43,7 +43,14 @@ func NewAgent(cfg AgentConfig, l *layout.LayoutView) *Agent {
 		cfg:        cfg,
 		roomSnap:   NewRoomSnapshot(),
 		layoutView: l,
+		evCh:       make(chan SystemEvent, 64), // Wire up event handlers
+
 	}
+}
+
+// OnLayoutStageUpdate emits a LayoutChangedEvent with the provided Stage.
+func (a *Agent) OnLayoutStageUpdate(s *layout.Stage) {
+	a.evCh <- LayoutChangedEvent{Stage: s}
 }
 
 func (a *Agent) Run(ctx context.Context) error {
@@ -65,8 +72,6 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 	}()
 
-	// Wire up event handlers
-	a.evCh = make(chan SystemEvent, 64)
 	// periodic reconciliation allows for the state to be eventually consistent
 	// in case we miss some events or something unexpected happens like missed or out of order events
 	a.tick = time.NewTicker(5 * time.Second)
@@ -141,6 +146,7 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
 			case lk.TrackSubscribed:
 				lg.Infof("TrackSubscribed: %s track %s kind %s", evt.Identity, evt.TID, evt.Kind)
 				// a.onStageTracks[evt.TID] = true // assume subscribed tracks are on stage
+			// todo ROOM_CLOSED
 			default:
 				lg.Debugf("ignoring LiveKit event: %s", logging.FormatValue(evt))
 			}
@@ -182,8 +188,13 @@ func (a *Agent) applyEvent(ev SystemEvent) {
 			}
 		}
 	case LayoutChangedEvent:
-		// Update room layout snapshot
-		// updater layout Tracks and Participants maps
+		// TODO consider coasting multiple LayoutChangedEvent into one
+		if sysE.Stage != nil {
+			a.layoutView.UpdateFromStage(sysE.Stage)
+		}
+		a.cfg.Logger.Debugf("updated stage layout: %v", logging.FormatValue(a.layoutView.CurrentStage))
+	default:
+		a.cfg.Logger.Errorf("unknown event type: %T", ev)
 	}
 }
 
@@ -191,12 +202,15 @@ func (a *Agent) reconcileState(ctx context.Context) {
 	// Decide changes based on the current layout and policy
 	a.cfg.Logger.Debugf("Reconciling state. Room snapshot: %v", logging.FormatValue(a.roomSnap))
 
+	// Take a snapshot of the layout under lock to avoid data races
+	lSnap := a.layoutView.Snapshot()
+
 	// TODO we may want to add PartialDecide only for dirty set of PID, TID (ones that were added/removed/changed)
 	// This can be done after profiler says that Decide is a bottleneck
 	// or we can keep track of dirty PIDs/TIDs in the room snapshot and pass them to Decide
 	// For now we just call full Decide every time
 	// TODO cache decisions on the room snapshot
-	decs := Decide(a.cfg.Policy, a.layoutView, a.roomSnap)
+	decs := Decide(a.cfg.Policy, lSnap, a.roomSnap)
 	a.cfg.Logger.Infof("Decisions: %v", logging.FormatValue(decs))
 
 	// Compare with current subscriptions
