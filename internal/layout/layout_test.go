@@ -18,9 +18,8 @@ func TestLayoutView_UpdateFromStage(t *testing.T) {
 		t.Errorf("want CurrentStage pointer updated")
 	}
 
-	lv.mu.RLock()
 	kinds, ok := lv.StageParticipants["alice"]
-	lv.mu.RUnlock()
+
 	if !ok {
 		t.Fatalf("want alice present in StageParticipants")
 	}

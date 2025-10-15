@@ -10,6 +10,7 @@ type EventType string
 type SystemEvent interface{ isSystemEvent() }
 
 type (
+	// RoomChangedEvent carries one or more LiveKit events; Agent updates its RoomSnapshot.
 	RoomChangedEvent struct {
 		LkEvents []livekit.Event // can contain multiple coalesced events
 	}

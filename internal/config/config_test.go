@@ -180,6 +180,7 @@ func TestResolve(t *testing.T) {
 		Addr:        ":8888",
 		IncludeKind: "audio",
 		ExcludeKind: "video",
+		IntialStage: "{\"slots\": [{\"identity\": \"abc\", \"trackKind\": \"video\"}]}",
 	}
 	env := Config{
 		LivekitURL:  "env-url",
@@ -236,5 +237,8 @@ func TestResolve(t *testing.T) {
 	}
 	if cfg.ExcludeKind != "video" {
 		t.Errorf("expected ExcludeKind=video, got %s", cfg.ExcludeKind)
+	}
+	if cfg.IntialStage != "{\"slots\": [{\"identity\": \"abc\", \"trackKind\": \"video\"}]}" {
+		t.Errorf("expected IntialStage={\"slots\": [{\"identity\": \"abc\", \"trackKind\": \"video\"}]}, got %s", cfg.IntialStage)
 	}
 }

@@ -28,7 +28,6 @@ type LayoutView struct {
 // Identity is optional if TrackID is set. The Participant must have a published track of the given kind
 // TrackKind is optional, if TrackID is set. The kind must match the published track kind
 type Slot struct {
-	// Id        int    `json:"id,omitempty"`
 	Rect      *Rect  `json:"rect"`
 	TrackID   string `json:"trackId,omitempty"`
 	Identity  string `json:"identity,omitempty"`  // participant identity
@@ -176,7 +175,7 @@ func HTTPHandler(stage *Stage, onUpdate OnUpdateFunc, w http.ResponseWriter, r *
 			_, _ = w.Write([]byte("invalid layout"))
 			return err
 		}
-		// Do not mutate the provided stage pointer here; delegate to callback/agent.
+
 		if onUpdate != nil {
 			onUpdate(&s)
 		}

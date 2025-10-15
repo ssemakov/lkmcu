@@ -10,6 +10,7 @@ import (
 	"github.com/ssemakov/lkmcu/internal/logging"
 )
 
+// AgentConfig collects dependencies and settings needed to start an Agent.
 type AgentConfig struct {
 	Logger logging.Logger
 	Config config.Config
@@ -23,11 +24,10 @@ type lkClient interface {
 	SubscriptionSnapshot() []*lk.Subscription
 }
 
+// Agent coordinates LiveKit events and layout updates to keep subscriptions in sync.
 type Agent struct {
 	cfg AgentConfig
 	lk  lkClient
-
-	// stageTracks map[string]bool // track ID -> onStage
 
 	layoutView *layout.LayoutView // current layout view
 	roomSnap   *RoomSnapshot      // current room state
@@ -36,23 +36,24 @@ type Agent struct {
 	tick *time.Ticker     // periodic safety reconciliation
 }
 
+// NewAgent constructs an Agent with policy initialized from the provided configuration.
 func NewAgent(cfg AgentConfig, l *layout.LayoutView) *Agent {
 	cfg.Policy = NewPolicy(cfg.Config.IncludeKind, cfg.Config.ExcludeKind)
 
 	return &Agent{
 		cfg:        cfg,
-		roomSnap:   NewRoomSnapshot(),
+		roomSnap:   NewRoomSnapshot(), // room snapshot is single-threaded, no locks
 		layoutView: l,
-		evCh:       make(chan SystemEvent, 64), // Wire up event handlers
-
+		evCh:       make(chan SystemEvent, 64),
 	}
 }
 
-// OnLayoutStageUpdate emits a LayoutChangedEvent with the provided Stage.
+// OnLayoutStageUpdate pushes a LayoutChangedEvent reflecting the supplied stage into the agent loop.
 func (a *Agent) OnLayoutStageUpdate(s *layout.Stage) {
 	a.evCh <- LayoutChangedEvent{Stage: s}
 }
 
+// Run connects to LiveKit and drives reconciliation until the context is cancelled.
 func (a *Agent) Run(ctx context.Context) error {
 	lg := a.cfg.Logger
 	lg.Infof("agent starting for room=%s identity=%s", a.cfg.Config.Room, a.cfg.Config.Identity)
@@ -61,7 +62,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	// Join the livekit room
 	a.lk = lk.NewClient(a.cfg.Config.LivekitURL, a.cfg.Config.APIKey, a.cfg.Config.APISecret, nil)
 	if err := a.lk.JoinRoom(a.cfg.Config.Room, a.cfg.Config.Identity); err != nil {
-		lg.Errorf("could not join room: %v", err)
+		lg.Fatalf("could not join room: %v", err)
 	} else {
 		lg.Infof("joined room %s as %s", a.cfg.Config.Room, a.cfg.Config.Identity)
 	}
@@ -75,8 +76,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	// periodic reconciliation allows for the state to be eventually consistent
 	// in case we miss some events or something unexpected happens like missed or out of order events
 	a.tick = time.NewTicker(5 * time.Second)
+	defer a.tick.Stop()
+
 	go a.consumeLiveKitEvents(ctx)
-	go a.serveLayoutApi(ctx)
 
 	// TODO initial room state fetch
 	// Get your own participant ID to be able to ignore your own events
@@ -90,7 +92,6 @@ func (a *Agent) Run(ctx context.Context) error {
 			return ctx.Err()
 
 		case <-a.tick.C:
-			// TODO query LiveKit for the current room state and compare with our state
 			a.reconcileState(ctx)
 
 		case ev := <-a.evCh:
@@ -101,15 +102,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 }
 
-func (a *Agent) serveLayoutApi(ctx context.Context) {
-	lg := a.cfg.Logger
-	lg.Infof("starting layout API server")
-	// TODO
-	// push layout changes to the event channel
-	<-ctx.Done()
-	lg.Infof("stopping layout API server")
-}
-
+// consumeLiveKitEvents streams LiveKit events into the agent's event channel until cancellation.
 func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
 	lg := a.cfg.Logger
 	lg.Debugf("starting LiveKit event consumer")
@@ -118,7 +111,11 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
 		case <-ctx.Done():
 			lg.Debugf("stopping LiveKit event consumer")
 			return
-		case e := <-a.lk.Events():
+		case e, ok := <-a.lk.Events():
+			if !ok {
+				lg.Infof("LiveKit event channel closed")
+				return
+			}
 			switch evt := e.(type) {
 			case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
 				lg.Infof("received LiveKit event: %s", logging.FormatValue(e))
@@ -156,6 +153,7 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
 	}
 }
 
+// applyEvent updates the room snapshot or layout view based on incoming system events.
 func (a *Agent) applyEvent(ev SystemEvent) {
 	a.cfg.Logger.Debugf("applying event: %v", logging.FormatValue(ev))
 
@@ -190,6 +188,7 @@ func (a *Agent) applyEvent(ev SystemEvent) {
 	case LayoutChangedEvent:
 		// TODO consider coasting multiple LayoutChangedEvent into one
 		if sysE.Stage != nil {
+			// Update layout view atomically
 			a.layoutView.UpdateFromStage(sysE.Stage)
 		}
 		a.cfg.Logger.Debugf("updated stage layout: %v", logging.FormatValue(a.layoutView.CurrentStage))
@@ -198,11 +197,12 @@ func (a *Agent) applyEvent(ev SystemEvent) {
 	}
 }
 
+// reconcileState decides and logs the subscription operations required to match desired layout state.
 func (a *Agent) reconcileState(ctx context.Context) {
 	// Decide changes based on the current layout and policy
 	a.cfg.Logger.Debugf("Reconciling state. Room snapshot: %v", logging.FormatValue(a.roomSnap))
 
-	// Take a snapshot of the layout under lock to avoid data races
+	// Take a snapshot of the layout to avoid holding locks during Decide
 	lSnap := a.layoutView.Snapshot()
 
 	// TODO we may want to add PartialDecide only for dirty set of PID, TID (ones that were added/removed/changed)
