@@ -72,6 +72,27 @@ func (o *UpdateOp) exec(lk *livekit.Client) error {
 	return nil
 }
 
+// Decide computes desired subscription actions for all tracks given:
+// - policy: inclusion/exclusion of track kinds
+// - layout: on-stage participants and tracks
+// - snapshot: current room state
+//
+// Join model:
+// - For each track in snapshot.Tracks (key = Track SID):
+//  1. Verify track and its owner participant exist.
+//     - Participant is looked up via TrackInfo.ParticipantSID (Participant SID) in snapshot.Participants.
+//  2. Determine if track is “on stage”:
+//     - Directly: layout.StageTracks[trackKey] presence means on stage.
+//     - By identity: take participant.Identity, then check if it appears in
+//     layout.StageParticipants with a kind matching TrackInfo.Kind.
+//  3. Apply policy include/exclude rules. If excluded or not on stage → Paused.
+//  4. Otherwise:
+//     - video/screenshare → VideoFull
+//     - audio → Audio
+//
+// Output:
+//   - A slice of Decision values, one per considered track, where Decision.TrackID equals
+//     the map key (trackKey) used in snapshot.Tracks.
 func Decide(policy Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []Decision {
 	desc := []Decision{}
 
@@ -81,8 +102,8 @@ func Decide(policy Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []
 			continue
 		}
 
-		// participant presence
-		pInfo, ok := snapshot.Participants[tInfo.PID]
+		// participant presence by SID (ParticipantSID)
+		pInfo, ok := snapshot.Participants[tInfo.ParticipantSID]
 		if !ok || pInfo == nil {
 			continue
 		}
@@ -96,8 +117,21 @@ func Decide(policy Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []
 			continue
 		}
 
-		// track on stage?
-		_, onStage := layout.StageTracks[tid]
+		// on-stage by Track SID presence or by participant identity + kind
+		// layout.StageParticipants is keyed by participant identity
+		onStage := false
+		if layout.StageTracks[tid] != "" {
+			onStage = true
+			// or check if the participant is on stage with the given track kind
+		} else if kinds, ok := layout.StageParticipants[pInfo.Identity]; ok {
+			for _, tk := range kinds {
+				if tk == tInfo.Kind.String() {
+					onStage = true
+					break
+				}
+			}
+		}
+
 		if !onStage {
 			desc = append(desc, Decision{TrackID: tid, Action: Paused, Reason: "not on stage"})
 			continue
@@ -116,6 +150,16 @@ func Decide(policy Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []
 	return desc
 }
 
+// Diff converts desired decisions into subscription operations compared to current subscriptions.
+// - cur: current LiveKit subscriptions (TID = trackKey/SID as used by Decide outputs)
+// - decs: target high-level decisions from Decide
+//
+// Behavior:
+// - For decisions with action VideoFull/VideoLow/Audio: subscribe if not already subscribed.
+// - For Paused decisions: unsubscribe if currently subscribed.
+// - Also unsubscribe any current subscriptions not present in decs (participant/track gone).
+//
+// Returns a list of operations (SubscribeOp/UnsubscribeOp/UpdateOp) to reach the target state.
 func Diff(cur []*livekit.Subscription, decs []Decision) []Operations {
 	ops := make([]Operations, 0)
 

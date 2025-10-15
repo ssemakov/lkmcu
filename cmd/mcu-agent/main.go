@@ -32,22 +32,36 @@ func main() {
 		lg.Fatalf("room is required (--room or LIVEKIT_ROOM)")
 	}
 
-	stage := layout.Default()
+	lView, err := layout.NewLayoutView(cfg.IntialStage)
+	if err != nil {
+		lg.Fatalf("invalid initial stage layout: %v", err)
+	} else {
+		lg.Infof("loaded initial stage layout: %v", logging.FormatValue(lView.CurrentStage))
+	}
+
+	agent := pipeline.NewAgent(pipeline.AgentConfig{
+		Logger: lg,
+		Config: cfg,
+	}, lView)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200); _, _ = w.Write([]byte("ok")) })
 	mux.Handle("/metrics", metrics.Handler())
-	mux.HandleFunc("/layout", func(w http.ResponseWriter, r *http.Request) { layout.HTTPHandler(&stage, w, r) })
+	mux.HandleFunc("/layout", func(w http.ResponseWriter, r *http.Request) {
+		// For GET, capture a consistent pointer snapshot to avoid a data race
+		stagePtr := lView.Snapshot().CurrentStage
+		err := layout.HTTPHandler(stagePtr, func(st *layout.Stage) {
+			agent.OnLayoutStageUpdate(st)
+		}, w, r)
+		if err != nil {
+			lg.Errorf("layout handler error: %v", err)
+		}
+	})
 
 	go func() { _ = http.ListenAndServe(cfg.Addr, mux) }()
 	lg.Infof("HTTP listening on %s", cfg.Addr)
 
 	lg.Infof("starting MCU agent for room=%s identity=%s", cfg.Room, cfg.Identity)
-
-	agent := pipeline.NewAgent(pipeline.AgentConfig{
-		Layout: stage,
-		Logger: lg,
-		Config: cfg,
-	})
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()

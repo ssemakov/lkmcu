@@ -20,6 +20,7 @@ type Config struct {
 	Addr        string
 	IncludeKind string
 	ExcludeKind string
+	IntialStage string // initial layout JSON
 }
 
 func FromEnv() Config {
@@ -49,6 +50,7 @@ func FromFlags() Config {
 		logLevel    = flag.String("log-level", "", "log level, options: debug, info (default), error")
 		includeKind = flag.String("include-kind", "", "comma-separated list of track kinds to include (empty = all), options: audio, video, screen")
 		excludeKind = flag.String("exclude-kind", "", "comma-separated list of track kinds to exclude, options: audio, video, screen")
+		IntialStage = flag.String("initial-stage", "", "initial stage layout JSON")
 	)
 	flag.Parse()
 
@@ -63,6 +65,7 @@ func FromFlags() Config {
 		LogLevel:    *logLevel,
 		IncludeKind: *includeKind,
 		ExcludeKind: *excludeKind,
+		IntialStage: *IntialStage,
 	}
 }
 
@@ -79,6 +82,7 @@ func Resolve(flags Config, env Config, defaults Config) Config {
 		Addr:        firstNonEmpty(flags.Addr, env.Addr, defaults.Addr),
 		IncludeKind: firstNonEmpty(flags.IncludeKind, env.IncludeKind, defaults.IncludeKind),
 		ExcludeKind: firstNonEmpty(flags.ExcludeKind, env.ExcludeKind, defaults.ExcludeKind),
+		IntialStage: firstNonEmpty(flags.IntialStage, env.IntialStage, defaults.IntialStage),
 	}
 }
 

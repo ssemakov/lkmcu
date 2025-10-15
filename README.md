@@ -51,6 +51,98 @@ Code layout:
 - Core packages: `internal/pipeline`, `internal/media`, `internal/logging`, `internal/config`, `internal/metrics`.
 - Tests colocated as `*_test.go`.
 
+## Layout Examples
+
+These examples illustrate how to define stage layouts for the MCU.
+
+### Example 1
+
+One participant on stage with audio and video tracks published. No slot specified — video takes the entire stage.
+
+JSON:
+
+`'{"slots": [{"identity": "abc", "trackKind": "video"}, {"identity": "abc", "trackKind": "audio"}]}'`
+
+### Example 2
+
+Two participants on stage. Alice is the main video filling most of the stage; Bob is a picture-in-picture tile on top. Both have audio included.
+
+JSON:
+
+```
+  {"slots": [
+    {"identity": "alice", "trackKind": "video", "rect": {"x":0, "y":0, "w":0.7, "h":1.0, "z":0}},
+    {"identity": "bob", "trackKind": "video", "rect": {"x":0.7, "y":0, "w":0.3, "h":0.3, "z":1}},
+    {"identity": "alice", "trackKind": "audio"},
+    {"identity": "bob", "trackKind": "audio"}
+    ]}
+```
+
+## Layout API (curl)
+
+Assuming the layout HTTP handler is mounted at `http://localhost:8080/layout`.
+
+GET current layout
+
+```bash
+curl -sS -X GET http://localhost:8080/layout \
+  -H "Accept: application/json"
+```
+
+POST new layout
+
+- Sends a Stage JSON with non-empty `slots`; success returns `204 No Content`.
+- Invalid JSON or empty `slots` returns `400` with body `invalid layout`.
+
+Example 1: single participant full-screen video plus audio
+
+```bash
+curl -sS -X POST http://localhost:8080/layout \
+  -H "Content-Type: application/json" \
+  -d '{
+    "slots": [
+      {"identity": "abc", "trackKind": "video"},
+      {"identity": "abc", "trackKind": "audio"}
+    ]
+  }' -i
+```
+
+Example 2: two videos with explicit rectangles and z-order
+
+```bash
+curl -sS -X POST http://localhost:8080/layout \
+  -H "Content-Type: application/json" \
+  -d '{
+    "slots": [
+      {
+        "identity": "alice",
+        "trackKind": "video",
+        "rect": {"x":0, "y":0, "w":0.7, "h":1.0, "z":0}
+      },
+      {
+        "identity": "bob",
+        "trackKind": "video",
+        "rect": {"x":0.7, "y":0, "w":0.3, "h":0.3, "z":1}
+      },
+      {
+        "identity": "alice",
+        "trackKind": "audio"
+      },
+      {
+        "identity": "bob",
+        "trackKind": "audio"
+      }
+    ]
+  }' -i
+```
+
+Notes
+
+- `slots[].identity`: participant identity
+- `slots[].trackKind`: `audio`, `video`, or `screen`
+- `slots[].trackId`: optional explicit track SID (alternative to identity/trackKind)
+- `slots[].rect`: optional `{x,y,w,h,z}` for video/screen; ignored for audio
+
 ## Docker
 
 Build and run using Docker (example):

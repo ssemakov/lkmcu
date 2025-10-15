@@ -114,7 +114,7 @@ func TestRoomSnapshot_UpsertAndDeleteTrack(t *testing.T) {
 	if track == nil {
 		t.Fatalf("track is nil after upsert")
 	}
-	if track.ID != tid || track.Kind != kind {
+	if track.TrackSID != tid || track.Kind != kind {
 		t.Errorf("unexpected track fields: %+v", track)
 	}
 
