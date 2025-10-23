@@ -10,14 +10,16 @@ import (
 	"github.com/ssemakov/lkmcu/internal/metrics"
 )
 
-// / MapperState returned by RTPToNTP for observability
+// MapperState returned by RTPToNTP for observability
 type MapperState struct {
-	SRAge      time.Duration
-	Degraded   bool
-	BaseNTP    float64
-	BaseRTP    uint64
-	ClockRate  uint32
-	LastNTPOut float64
+	SRAge         time.Duration
+	BaseNTP       float64
+	BaseRTP       uint64
+	ClockRate     uint32
+	LastNTPOut    float64
+	Degraded      bool
+	Discontinuity bool
+	Initialized   bool
 }
 
 type ClockMapperConfig struct {
@@ -50,7 +52,7 @@ func DefaultClockMapperConfig() *ClockMapperConfig {
 	}
 }
 
-func NewClockMapper(accr MasterClockAccr, metrics *metrics.Metrics, logger logging.Logger, config *ClockMapperConfig) *ClockMapper {
+func NewClockMapper(metrics *metrics.Metrics, logger logging.Logger, config *ClockMapperConfig) *ClockMapper {
 	if config == nil {
 		config = DefaultClockMapperConfig()
 	}
@@ -108,6 +110,7 @@ func (cm *ClockMapper) UpdateFromSR(ssrc uint32, rtpTs, ntpHigh, ntpLow uint32) 
 		// Monotonic guard reset
 		sc.lastNTPOutput = sc.baseNTP
 		sc.degraded = true
+		sc.discontinuity = true
 
 		// TODO: drift estimator reset
 		// TODO: signal downstream via channel (actual flush/keyframe is handled by pipeline)
@@ -120,10 +123,11 @@ func (cm *ClockMapper) UpdateFromSR(ssrc uint32, rtpTs, ntpHigh, ntpLow uint32) 
 
 	now := time.Now()
 	sc.lastSRReceivedAt = now
-	sc.baseSRRecvAt = now
+	// sc.baseSRRecvAt = now
 
 	if !discontinuity {
 		sc.degraded = false
+		sc.discontinuity = false
 	}
 
 	return nil
@@ -159,7 +163,7 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
-	if sc.baseNTP == 0 {
+	if sc.lastSRReceivedAt.IsZero() {
 		return 0, MapperState{}, fmt.Errorf("no SR seen yet for SSRC %d", ssrc)
 	}
 
@@ -177,6 +181,19 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 		LastNTPOut: sc.lastNTPOutput,
 	}
 
+	// SR age check
+	if srAge > cm.cfg.SRTimeout {
+		cm.logger.Infof("ClockMapper: SR timeout %.3f s for SSRC=%d; mapping degraded", srAge.Seconds(), ssrc)
+
+		sc.lastNTPOutput = ntp
+		sc.degraded = true
+
+		state.LastNTPOut = ntp
+		state.Degraded = true
+
+		return ntp, state, fmt.Errorf("SR timeout %.3f s", srAge.Seconds())
+	}
+
 	// Monotonic output guard
 	if sc.lastNTPOutput != 0 && !sc.degraded && ntp+cm.cfg.Epsilon.Seconds() < sc.lastNTPOutput {
 		backstep := sc.lastNTPOutput - ntp
@@ -190,23 +207,22 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 		} else {
 			cm.logger.Infof("ClockMapper: large backward NTP jump %.3f ms for SSRC=%d; treating as discontinuity",
 				backstep*1000.0, ssrc)
-			sc.degraded = true
-			sc.lastNTPOutput = sc.baseNTP
 
+			sc.degraded = true
+			sc.discontinuity = true
+
+			// apply smoothing to avoid backstep
+			ntp = sc.lastNTPOutput + cm.cfg.ClampSmoothing.Seconds()
+			sc.lastNTPOutput = ntp
+
+			state.LastNTPOut = ntp
 			state.Degraded = true
-			return sc.baseNTP, state, fmt.Errorf("backstep > %.3f ms", backstep*1000.0)
+			state.Discontinuity = true
+
+			return ntp, state, fmt.Errorf("backstep > %.3f ms", backstep*1000.0)
 		}
 	}
 
-	// SR age check
-	if srAge > cm.cfg.SRTimeout {
-		cm.logger.Infof("ClockMapper: SR timeout %.3f s for SSRC=%d; mapping degraded", srAge.Seconds(), ssrc)
-
-		sc.lastNTPOutput = ntp
-		sc.degraded = true
-		state.Degraded = true
-		return ntp, state, fmt.Errorf("SR timeout %.3f s", srAge.Seconds())
-	}
 	sc.lastNTPOutput = ntp
 	state.LastNTPOut = sc.lastNTPOutput
 
@@ -216,20 +232,52 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 // SetClockRate sets the clock rate for the given SSRC stream
 func (cm *ClockMapper) SetClockRate(ssrc uint32, clockRate uint32) {
 	cm.m.Lock()
-	defer cm.m.Unlock()
-
 	sc, ok := cm.streamClocks[ssrc]
+	cm.m.Unlock()
+
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
 	if !ok {
 		sc = &StreamClock{
 			wrapTracker: RTPWrapTracker{},
 		}
 		cm.streamClocks[ssrc] = sc
 	}
+
 	sc.clockRate = clockRate
 }
 
 func (cm *ClockMapper) State(ssrc uint32) MapperState {
-	return MapperState{}
+	cm.m.RLock()
+	sc, ok := cm.streamClocks[ssrc]
+	cm.m.RUnlock()
+
+	if !ok {
+		return MapperState{}
+	}
+
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	srAge := time.Duration(0)
+	init := true
+
+	if !sc.lastSRReceivedAt.IsDST() {
+		srAge = time.Since(sc.lastSRReceivedAt)
+		init = false
+	}
+
+	return MapperState{
+		SRAge:         srAge,
+		BaseNTP:       sc.baseNTP,
+		BaseRTP:       sc.baseRTP,
+		ClockRate:     sc.clockRate,
+		LastNTPOut:    sc.lastNTPOutput,
+		Degraded:      sc.degraded,
+		Discontinuity: sc.discontinuity,
+		Initialized:   !init,
+	}
 }
 
 func (cm *ClockMapper) ForEach(f func(ssrc uint32, state MapperState) bool) {

@@ -32,8 +32,8 @@ type StreamClock struct {
 	wrapTracker      RTPWrapTracker
 	lastNTPOutput    float64   // monotonic guard, last NTP timestamp output, to detect clock jumps
 	lastSRReceivedAt time.Time // monotonic time when last SR was received, don't convert to Unix to avoid clock jumps
-	baseSRRecvAt     time.Time // monotonic time when base SR was received, don't convert to Unix to avoid clock jumps
 	degraded         bool      // set when clock mapping is degraded due to lack of SRs (e.g., no SRs received for a while), or due to discontinuity (SR jumps more than threshold (50ms))
+	discontinuity    bool      // set when last SR caused a discontinuity
 	mu               sync.Mutex
 }
 
