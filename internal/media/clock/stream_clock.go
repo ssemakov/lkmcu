@@ -27,7 +27,6 @@ type RTPWrapTracker struct {
 type StreamClock struct {
 	baseRTP          uint64  // from SR RTP timestamp
 	baseNTP          float64 // from SR NTP timestamp; NTP as float64 seconds since epoch
-	offset           float64 // seconds, baseNtp - baseRtp/clockRate
 	clockRate        uint32  // e.g., 90000 for video, 48000 for audio
 	wrapTracker      RTPWrapTracker
 	lastNTPOutput    float64   // monotonic guard, last NTP timestamp output, to detect clock jumps

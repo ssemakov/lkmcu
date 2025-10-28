@@ -93,7 +93,7 @@ func (cm *ClockMapper) UpdateFromSR(ssrc uint32, rtpTs, ntpHigh, ntpLow uint32) 
 	}
 
 	extRtp := sc.wrapTracker.ExtendedRTP(rtpTs)
-	predicted := sc.offset + deltaSeconds(extRtp, sc)
+	predicted := sc.baseNTP + deltaSeconds(extRtp, sc)
 	delta := ntpTsSeconds - predicted
 	discontinuity := math.Abs(delta) > cm.cfg.DiscontinuityThreshold.Seconds()
 
@@ -106,7 +106,6 @@ func (cm *ClockMapper) UpdateFromSR(ssrc uint32, rtpTs, ntpHigh, ntpLow uint32) 
 		sc.wrapTracker.lastRTP = rtpTs
 		sc.baseRTP = uint64(rtpTs)
 		sc.baseNTP = ntpTsSeconds
-		sc.offset = offset(ntpTsSeconds, sc.baseRTP, sc.clockRate)
 
 		// Monotonic guard reset
 		sc.lastNTPOutput = sc.baseNTP
@@ -119,7 +118,6 @@ func (cm *ClockMapper) UpdateFromSR(ssrc uint32, rtpTs, ntpHigh, ntpLow uint32) 
 		// Update stream clock state
 		sc.baseNTP = ntpTsSeconds
 		sc.baseRTP = extRtp
-		sc.offset = offset(ntpTsSeconds, extRtp, sc.clockRate)
 	}
 
 	now := time.Now()
@@ -170,7 +168,7 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 
 	extRtp := sc.wrapTracker.ExtendedRTP(rtpTs)
 	// predicted NTP
-	ntp := sc.offset + deltaSeconds(extRtp, sc)
+	ntp := sc.baseNTP + deltaSeconds(extRtp, sc)
 	srAge := time.Since(sc.lastSRReceivedAt)
 
 	state := MapperState{
@@ -196,7 +194,7 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 	}
 
 	// Monotonic output guard
-	if sc.lastNTPOutput != 0 && !sc.degraded && ntp+cm.cfg.Epsilon.Seconds() < sc.lastNTPOutput {
+	if sc.lastNTPOutput != 0 && ntp+cm.cfg.Epsilon.Seconds() < sc.lastNTPOutput {
 		backstep := sc.lastNTPOutput - ntp
 
 		if backstep < cm.cfg.BackstepClampThreshold.Seconds() {
@@ -333,10 +331,6 @@ func (cm *ClockMapper) ForEach(f func(ssrc uint32, state MapperState) bool) {
 			break
 		}
 	}
-}
-
-func offset(ntpTsSeconds float64, rtpTs uint64, clockRate uint32) float64 {
-	return ntpTsSeconds - float64(rtpTs)/float64(clockRate)
 }
 
 func deltaSeconds(extRtp uint64, sc *StreamClock) float64 {
