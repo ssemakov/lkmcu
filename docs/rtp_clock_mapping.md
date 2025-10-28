@@ -12,19 +12,19 @@ Define how the MCU reconstructs a stable wall-clock for incoming RTP streams usi
 
 ## Clock Model
 
-Each RTP sender periodically emits RTCP SR packets containing a `(rtp_timestamp, ntp_timestamp)` pair. The MCU keeps a per-SSRC linear mapping:
+Each RTP sender periodically emits RTCP SR packets containing a `(rtp_timestamp, ntp_timestamp)` pair. The MCU keeps a per‑SSRC linear mapping anchored at the latest SR:
 
 ```
-NTP(t_rtp) = offset + (t_rtp - base_rtp) / clock_rate
+NTP(t_rtp) = base_ntp + (extended_rtp(t_rtp) - base_rtp) / clock_rate
 ```
 
 Where:
 
-- `base_rtp`, `base_ntp`: the latest SR anchor, normalized for rollover.
-- `clock_rate`: codec-specific rate (e.g., video 90 kHz, audio 48 kHz); fall back to defaults when SDP lacks explicit value.
-- `offset = base_ntp`.
+- `base_rtp`, `base_ntp`: the most recent SR anchor. `base_rtp` is kept in an extended 64‑bit timeline to handle rollover.
+- `extended_rtp(t)`: 64‑bit RTP timestamp obtained by tracking 32‑bit wraps (see below).
+- `clock_rate`: codec‑specific rate (e.g., video 90 kHz, audio 48 kHz); must be set per SSRC.
 
-Here's how RTP maps to RTP via base values from the latest SR.
+Here's how RTP maps to NTP via base values from the latest SR.
 
 ```
 Time (in seconds) ─────────────────────────────────────────────────────────────►
@@ -75,30 +75,32 @@ Time (in seconds) ────────────────────�
 
 ### Per-SSRC State
 
-- `base_rtp`, `base_ntp`
-- `clock_rate`
-- `offset`
-- `wrap_count` / `extended_rtp` to handle 32-bit rollover
-- `last_ntp_out`: monotonic guard for converted timestamps
-- `last_sr_received_at`: master clock timestamp of the SR for freshness checks
+- `base_rtp` (uint64), `base_ntp` (float64 seconds)
+- `clock_rate` (uint32)
+- `offset` (= `base_ntp`, internal convenience)
+- `wrap_tracker` (last_rtp, wraps) to extend 32‑bit RTP into 64‑bit space
+- `last_ntp_out` (float64): monotonic guard for converted timestamps
+- `last_sr_received_at` (time.Time): arrival time used for SR freshness
+- `degraded`, `discontinuity` flags for observability/guards
 
 ### Update Flow
 
 1. **SR Arrival**
-   - Extend RTP timestamp via wrap detection: if `rtp_new < rtp_prev` and `rtp_prev - rtp_new > 2^31`, increment `wrap_count`.
-   - Update `base_rtp`/`base_ntp`, recompute `offset`, store `last_sr_received_at`.
-   - Reset monotonic guard and drift estimator if SR indicates sender clock reset.
+   - Out‑of‑order guard: SRs with NTP older than the current anchor (within an `epsilon` tolerance) are ignored.
+   - Extend RTP to 64‑bit via wrap detection: if `rtp_new < rtp_prev` and `rtp_prev - rtp_new > 2^31`, increment wraps; then `extended = rtp_new + wraps·2^32`.
+   - Predict expected NTP at the SR’s RTP using the current linear model and compare to the SR’s NTP. If `|delta| > discontinuity_threshold`, treat as a sender clock discontinuity:
+     - Reset wrap baseline (`wraps=0`, `last_rtp=rtp_new`).
+     - Set `base_rtp = rtp_new` (raw), `base_ntp = sr.ntp`, `offset = base_ntp`.
+     - Reset `last_ntp_out = base_ntp`; set `degraded = true`, `discontinuity = true`.
+   - Otherwise (no discontinuity), update the anchor to the SR: `base_rtp = extended`, `base_ntp = sr.ntp`, `offset = base_ntp`.
+   - Record `last_sr_received_at = now`. On non‑discontinuity SRs, clear `degraded`/`discontinuity`.
 2. **Between SRs**
-   - Convert RTP timestamps with the linear model.
-   - Clamp extrapolation to `max_extrapolation_window` (e.g., 10 s). Beyond this window, flag degraded state so downstream (e.g., jitter buffer) can widen latency. See [Jitter Buffer Design](./jitter_buffer.md#degraded-mode) for buffering response.
+   - Convert incoming RTP timestamps using the linear model with the wrap tracker.
+   - Enforce monotonic output per SSRC. If the computed NTP would move backwards relative to `last_ntp_out`:
+     - If the backstep is small (`< backstep_clamp_threshold`), clamp forward to `last_ntp_out + clamp_smoothing`.
+     - Otherwise, mark `degraded = true` and clamp to `last_ntp_out + clamp_smoothing`.
 3. **Missing SRs**
-   - After `sr_timeout` (e.g., 15 s) mark stream degraded; optionally fall back to arrival-time-based pacing until SR resumes.
-
-### API Sketch
-
-- `UpdateFromSR(ssrc, rtp_ts, ntp_ts) error`
-- `RTPToNTP(ssrc, rtp_ts) (ntp_ts, MapperState, error)`
-- `State(ssrc) MapperState` with fields: `sr_age`, `extrapolation_ms`, `drift_ppm`
+   - After `sr_timeout` without SRs, mark the mapping `degraded` and return an error on conversion while still providing a best‑effort projected NTP.
 
 ## Drift Detection & Correction
 
