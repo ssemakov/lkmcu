@@ -108,7 +108,16 @@ Time (in seconds) ────────────────────�
 
 - Compare `expected_time = mapper.RTPToNTP(rtp_ts)` with the MCU master clock (`arrival_time`) after compensating for network RTT if available.
 - Maintain sliding window (e.g., 5 min, 50 samples) of `(expected_time, arrival_time)` deltas.
-- Use EWMA or linear regression to estimate drift slope; reset estimator on SR discontinuities.
+- Use EWMA (Exponentially Weighted Moving Average) or linear regression to estimate drift slope; reset estimator on SR discontinuities:
+
+Formula:
+EWMA(t) = α · slope + (1 − α) · EWMA(t−1)
+slope = (arrival_time - expected_time) / elapsed_time_since_last_sample
+
+Where:
+α = smoothing factor (0 < α ≤ 1)
+→ High α = reacts quickly (less smoothing)
+→ Low α = reacts slowly (more smoothing)
 
 ### Drift Budget & Thresholds
 
