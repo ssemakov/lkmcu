@@ -29,6 +29,12 @@ type driftSample struct {
 	errS float64   // seconds (arrival - expected), positive means packets arrive late (sender is slow), negative means packets arrive early (sender is fast)
 }
 
+// DriftConfig captures the thresholds and smoothing constants used while
+// estimating the difference between sender and receiver clocks.
+//
+// The defaults returned by DefaultDriftConfig serve as a safe starting point;
+// override selectively if tighter or looser hysteresis is required for a
+// deployment.
 type DriftConfig struct {
 	WindowDuration     time.Duration // duration of rolling window for drift samples
 	MaxSamples         int           // cap on number of samples in rolling window
@@ -40,6 +46,12 @@ type DriftConfig struct {
 	MaxAudioPct        float64       // hard cap on audio sample rate adjustment percentage (e.g., 0.02 = ±2%). Prevents excessive audio pitch shift.
 	VideoNudgePerFrame time.Duration // Max timestamp nudge per video frame when correcting video pacing
 }
+
+// Drift tracks per-SSRC clock drift and recommends corrective action once
+// jitter-free drift surpasses configured thresholds.
+//
+// It is safe for concurrent use. Each SSRC is guarded by its own mutex so
+// independent streams do not block each other.
 type Drift struct {
 	metrics *metrics.Metrics
 	logger  logging.Logger
@@ -53,17 +65,25 @@ type Drift struct {
 type correctionAction string
 
 const (
-	None           correctionAction = "NoCorrection"
+	// None means no correction is required beyond normal pacing.
+	None correctionAction = "NoCorrection"
+	// AdjustSlightly requests a gentle correction (e.g. small sample-rate nudge).
 	AdjustSlightly correctionAction = "AdjustSlightly"
-	RequestResync  correctionAction = "RequestResync"
+	// RequestResync escalates to a hard correction such as a keyframe request.
+	RequestResync correctionAction = "RequestResync"
 )
 
+// DriftAssessment summarizes the current estimated drift and any recommended
+// corrective action after considering hysteresis.
 type DriftAssessment struct {
 	currentPpm               float64
 	correctionRecommendation correctionAction
 	hysteresisApplied        bool
 }
 
+// DefaultDriftConfig returns a configuration that balances responsiveness with
+// tolerance for short-term jitter. Use this as a template when tuning per
+// workload.
 func DefaultDriftConfig() DriftConfig {
 	return DriftConfig{
 		WindowDuration:     5 * time.Minute,
@@ -78,6 +98,9 @@ func DefaultDriftConfig() DriftConfig {
 	}
 }
 
+// NewDriftController builds a Drift tracker hooked up to metrics and logging.
+//
+// Metrics may be nil if exporting measurements is not required.
 func NewDriftController(metrics *metrics.Metrics, logger logging.Logger) *Drift {
 	return &Drift{
 		metrics: metrics,
@@ -87,6 +110,11 @@ func NewDriftController(metrics *metrics.Metrics, logger logging.Logger) *Drift 
 	}
 }
 
+// Observe ingests the latest packet arrival for the provided SSRC, updating the
+// drift model and returning the current assessment.
+//
+// Thread safety: the method is safe for concurrent use. Updates for the same
+// SSRC are serialized internally so callers do not need to coordinate.
 func (d *Drift) Observe(ssrc uint32, expected, arrival time.Time) DriftAssessment {
 	d.mu.Lock()
 	sd, ok := d.dm[ssrc]
@@ -100,6 +128,9 @@ func (d *Drift) Observe(ssrc uint32, expected, arrival time.Time) DriftAssessmen
 	d.mu.Unlock()
 
 	errS := arrival.Sub(expected).Seconds()
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
 	sd.errs.Push(driftSample{at: arrival, errS: errS})
 	if sd.lastObs.IsZero() {
 		sd.lastObs = arrival
@@ -115,6 +146,8 @@ func (d *Drift) Observe(ssrc uint32, expected, arrival time.Time) DriftAssessmen
 	return assess
 }
 
+// Reset discards any drift history for the supplied SSRC, typically when a
+// stream is torn down or reinitialized.
 func (d *Drift) Reset(ssrc uint32) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -122,6 +155,8 @@ func (d *Drift) Reset(ssrc uint32) {
 	delete(d.dm, ssrc)
 }
 
+// PruneExpired removes per-SSRC state that has not been updated within the
+// configured window, preventing stale entries from accumulating indefinitely.
 func (d *Drift) PruneExpired(now time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -134,10 +169,15 @@ func (d *Drift) PruneExpired(now time.Time) {
 }
 
 func (sd *ssrcDrift) updateEWMA(arrival time.Time, errS float64) float64 {
-	sd.mu.Lock()
-	defer sd.mu.Unlock()
+	// thread safety: caller holds sd.mu
 
 	dt := arrival.Sub(sd.lastObs).Seconds() // elapsed time since last sample
+
+	// same arrival time, skip and return current ppm
+	if dt == 0.0 {
+		return sd.slopeEWMA * 1e6 // parts per million
+	}
+
 	slope := (errS - sd.lastErr) / dt
 	alpha := sd.cfg.EWMAAlpha
 	// EWMA(t) = α · x_t + (1 − α) · EWMA(t−1)
@@ -150,8 +190,7 @@ func (sd *ssrcDrift) updateEWMA(arrival time.Time, errS float64) float64 {
 }
 
 func (sd *ssrcDrift) assessPPM(ppm float64) DriftAssessment {
-	sd.mu.Lock()
-	defer sd.mu.Unlock()
+	// thread safety: caller holds sd.mu
 
 	arrival := sd.lastObs
 	absPpm := math.Abs(ppm)
@@ -183,8 +222,7 @@ func (sd *ssrcDrift) assessPPM(ppm float64) DriftAssessment {
 	if !sd.over11ppmSince.IsZero() && arrival.Sub(sd.over11ppmSince) >= sd.cfg.SustainCrit {
 		a.correctionRecommendation = RequestResync
 		a.hysteresisApplied = true
-	}
-	if !sd.over6ppmSince.IsZero() && arrival.Sub(sd.over6ppmSince) >= sd.cfg.SustainWarn {
+	} else if !sd.over6ppmSince.IsZero() && arrival.Sub(sd.over6ppmSince) >= sd.cfg.SustainWarn {
 		a.correctionRecommendation = AdjustSlightly
 		a.hysteresisApplied = true
 	}
