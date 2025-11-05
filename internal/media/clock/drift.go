@@ -10,7 +10,7 @@ import (
 )
 
 type ssrcDrift struct {
-	errs      *RingBuffer[driftSample] // rolling window of recent drift samples
+	samples   *RingBuffer[driftSample] // rolling window of recent drift samples
 	slopeEWMA float64                  // seconds error change per second (dimensionless)
 	lastObs   time.Time                // last arrival time observed
 	lastErr   float64                  // last error observed (seconds)
@@ -120,8 +120,8 @@ func (d *Drift) Observe(ssrc uint32, expected, arrival time.Time) DriftAssessmen
 	sd, ok := d.dm[ssrc]
 	if !ok {
 		sd = &ssrcDrift{
-			errs: NewRingBuffer[driftSample](d.cfg.MaxSamples),
-			cfg:  &d.cfg,
+			samples: NewRingBuffer[driftSample](d.cfg.MaxSamples),
+			cfg:     &d.cfg,
 		}
 		d.dm[ssrc] = sd
 	}
@@ -131,12 +131,16 @@ func (d *Drift) Observe(ssrc uint32, expected, arrival time.Time) DriftAssessmen
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	sd.errs.Push(driftSample{at: arrival, errS: errS})
+	sd.samples.Push(driftSample{at: arrival, errS: errS})
 	if sd.lastObs.IsZero() {
 		sd.lastObs = arrival
 		sd.lastErr = errS
 
-		return DriftAssessment{}
+		// short-circuit until we have at least two samples to compute slope
+		return DriftAssessment{
+			currentPpm:               0,
+			correctionRecommendation: None,
+		}
 	}
 
 	ppm := sd.updateEWMA(arrival, errS)
@@ -196,7 +200,8 @@ func (sd *ssrcDrift) assessPPM(ppm float64) DriftAssessment {
 	absPpm := math.Abs(ppm)
 
 	a := DriftAssessment{
-		currentPpm: math.Round(ppm),
+		currentPpm:               math.Round(ppm),
+		correctionRecommendation: None,
 	}
 
 	if absPpm > sd.cfg.CritPPM {
