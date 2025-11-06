@@ -204,22 +204,21 @@ func (sd *ssrcDrift) assessPPM(ppm float64) DriftAssessment {
 		correctionRecommendation: None,
 	}
 
-	if absPpm > sd.cfg.CritPPM {
+	switch {
+	case absPpm > sd.cfg.CritPPM:
 		if sd.over11ppmSince.IsZero() {
 			sd.over11ppmSince = arrival
 		}
 		if sd.over6ppmSince.IsZero() {
 			sd.over6ppmSince = arrival
 		}
-
-	} else if absPpm > sd.cfg.WarnPPM {
+	case absPpm > sd.cfg.WarnPPM:
 		if sd.over6ppmSince.IsZero() {
 			sd.over6ppmSince = arrival
 		}
 		sd.over11ppmSince = time.Time{}
-	} else {
+	default:
 		sd.over6ppmSince, sd.over11ppmSince = time.Time{}, time.Time{}
-		a.correctionRecommendation = None
 		return a
 	}
 
