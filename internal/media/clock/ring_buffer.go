@@ -23,13 +23,13 @@ func (rb *RingBuffer[T]) Push(value T) {
 }
 
 func (rb *RingBuffer[T]) Values() []T {
-    values := make([]T, rb.size)
-    if rb.size == 0 {
-        return values
-    }
-    start := (rb.head - rb.size + rb.cap) % rb.cap
-    for i := 0; i < rb.size; i++ {
-        values[i] = rb.data[(start+i)%rb.cap]
-    }
-    return values
+	values := make([]T, rb.size)
+	if rb.size == 0 {
+		return values
+	}
+	start := (rb.head - rb.size + rb.cap) % rb.cap
+	for i := 0; i < rb.size; i++ {
+		values[i] = rb.data[(start+i)%rb.cap]
+	}
+	return values
 }
