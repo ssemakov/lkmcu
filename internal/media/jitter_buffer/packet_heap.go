@@ -16,6 +16,9 @@ func (ph PacketHeap) Len() int { return len(ph) }
 
 func (ph PacketHeap) Less(i, j int) bool {
 	// min heap based on PayloadTs
+	if ph[i].PayloadTs.Equal(ph[j].PayloadTs) {
+		return ph[i].Seq < ph[j].Seq
+	}
 	return ph[i].PayloadTs.Before(ph[j].PayloadTs)
 }
 
