@@ -46,6 +46,28 @@ func TestPacketHeap(t *testing.T) {
 	}
 }
 
+func TestPacketHeap_Peek(t *testing.T) {
+	p1 := &Packet{Seq: 1, PayloadTs: time.Unix(0, 1000)}
+	p2 := &Packet{Seq: 2, PayloadTs: time.Unix(0, 500)}
+
+	ph := newPacketHeap()
+	heap.Push(ph, p1)
+	heap.Push(ph, p2)
+
+	if ph.Len() != 2 {
+		t.Fatalf("Len=%d want=2", ph.Len())
+	}
+
+	peeked := ph.Peek()
+	if peeked.Seq != 2 {
+		t.Fatalf("peeked Seq=%d want=2", peeked.Seq)
+	}
+
+	if ph.Len() != 2 {
+		t.Fatalf("Len=%d want=2 after Peek", ph.Len())
+	}
+}
+
 func TestPacketHeap_EqualTimestamps(t *testing.T) {
 	p1 := &Packet{Seq: 1, PayloadTs: time.Unix(0, 1000)}
 	p2 := &Packet{Seq: 2, PayloadTs: time.Unix(0, 1000)}

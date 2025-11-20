@@ -1,15 +1,5 @@
 package jitter_buffer
 
-import (
-	"time"
-)
-
-type Packet struct {
-	PayloadTs time.Time
-	Seq       uint16
-	// Payload   []byte --- IGNORE ---
-}
-
 type PacketHeap []*Packet
 
 func (ph PacketHeap) Len() int { return len(ph) }
@@ -36,4 +26,11 @@ func (ph *PacketHeap) Pop() interface{} {
 	x := old[n-1]
 	*ph = old[0 : n-1]
 	return x
+}
+
+func (ph *PacketHeap) Peek() *Packet {
+	if ph.Len() == 0 {
+		return nil
+	}
+	return (*ph)[0]
 }
