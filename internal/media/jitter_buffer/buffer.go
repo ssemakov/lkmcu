@@ -1,7 +1,6 @@
 package jitter_buffer
 
 import (
-	"container/heap"
 	"sync"
 	"time"
 
@@ -16,6 +15,7 @@ const (
 	StatusLateDrop
 	StatusMapperDegraded
 	StatusMapperError
+	StatusRebuffering
 )
 
 type PacketPayload []byte
@@ -24,7 +24,7 @@ type Packet struct {
 	RtpTs     uint32
 	PayloadTs time.Time
 	Seq       uint16
-	Payload   *PacketPayload
+	Payload   PacketPayload
 }
 
 type Buffer interface {
@@ -35,9 +35,18 @@ type Buffer interface {
 }
 
 type Config struct {
-	LateDrop  time.Duration // packets older than target_ms + late_drop_ms are dropped
-	MaxTarget time.Duration // when Occupancy > max_target_ms start dropping oldest packets
-	Target    time.Duration // desired target buffer size in ms, if mapper is degraded, buffer size is increased to max_target_ms
+	LateDrop        time.Duration // packets older than target_ms + late_drop_ms are dropped
+	MaxTarget       time.Duration // when Occupancy > max_target_ms start dropping oldest packets
+	Target          time.Duration // desired target buffer size in ms, if mapper is degraded, buffer size is increased to max_target_ms
+	RebufferBurst   time.Duration // when buffer is empty for more than underflow_guard_ms, pause cursor by rebuffer_burst_ms
+	UndeflowGuard   time.Duration // duration of empty buffer to consider it underflowed (not having enough packets to pop)
+	MaxReorderDepth int           // maximum expected packet reordering depth in packets
+	DupeBufferSize  int           // number of recent packets to track for duplicate detection
+}
+
+type dupeKey struct {
+	pts int64
+	seq uint16
 }
 
 type SSRCBuffer struct {
@@ -45,6 +54,8 @@ type SSRCBuffer struct {
 	occupy  time.Duration
 	lastPop time.Time
 	target  time.Duration
+	burst   time.Duration
+	recent  clock.RingBuffer[dupeKey] // recent packets for duplicate detection, simple alternative to a full LRU cache
 
 	mu sync.Mutex
 }
@@ -59,9 +70,12 @@ type jitterBuffer struct {
 
 func DefaultConfig() *Config {
 	return &Config{
-		LateDrop:  20 * time.Millisecond,
-		MaxTarget: 200 * time.Millisecond,
-		Target:    80 * time.Millisecond,
+		LateDrop:        20 * time.Millisecond,
+		MaxTarget:       200 * time.Millisecond,
+		Target:          80 * time.Millisecond,
+		RebufferBurst:   20 * time.Millisecond,
+		UndeflowGuard:   20 * time.Millisecond,
+		MaxReorderDepth: 50,
 	}
 }
 
@@ -85,7 +99,8 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet, mapperState clock.Mappe
 
 	// Initialize per-SSRC packet heap if not present
 	if !ok {
-		sb := SSRCBuffer{heap: &PacketHeap{}, mu: sync.Mutex{}, occupy: 0, lastPop: time.Time{}}
+		sb := SSRCBuffer{heap: &PacketHeap{}, mu: sync.Mutex{}, occupy: 0, lastPop: time.Time{}, target: jb.cfg.Target,
+			burst: 0, recent: *clock.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize, dupeKeyEquals)}
 		jb.streams[ssrc] = &sb
 		s = &sb
 	}
@@ -94,42 +109,57 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet, mapperState clock.Mappe
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ntp, state, err := jb.mapper.RTPToNTP(ssrc, packet.RtpTs)
+	packetNtp, state, err := jb.mapper.RTPToNTP(ssrc, packet.RtpTs)
 
 	if err != nil {
 		return StatusMapperError, err
 	}
 
+	status := StatusAccepted
+
 	// if state.Degraded buffer size is increased to max_target_ms
 	if state.Degraded {
 		// if mapper degraded, use max target
 		s.target = jb.cfg.MaxTarget
+		status = StatusMapperDegraded
 	} else {
 		s.target = jb.cfg.Target
 	}
 
-	// 	When to drop / underflow
 	now := time.Now()
-	cursor := now.Add(-s.target)
-	if s.heap.Peek().PayloadTs.Before(cursor.Add(-jb.cfg.LateDrop)) {
-		return StatusLateDrop, nil
-	}
+	cursor := now.Add(-s.target).Add(s.burst)
+	head := s.heap.PeekPacket()
+	packetPts := time.Unix(0, int64(packetNtp*1e9))
 
-	if jb.Occupancy(ssrc) > s.target {
-		// drop oldest packet
-		oldest := heap.Pop(s.heap).(*Packet)
-		newest := s.heap.Peek()
-		if newest != nil {
-			s.occupy = newest.PayloadTs.Sub(oldest.PayloadTs)
+	// first packet after underflow
+	if head == nil {
+		s.occupy = 0
+	} else {
+		// If heap empty for > underflow_guard_ms → pause cursor (rebuffer_burst_ms) and log underflow.
+		if s.heap.Len() == 0 && !s.lastPop.IsZero() && now.Sub(s.lastPop) > jb.cfg.UndeflowGuard {
+			s.burst = jb.cfg.RebufferBurst
+			status = StatusRebuffering
+		} else {
+			s.burst = 0
+		}
+
+		if packetPts.Before(cursor.Add(-jb.cfg.LateDrop)) {
+			// return immediately without adding packet to heap
+			return StatusLateDrop, nil
+		}
+
+		// drop oldest packets until occupancy ≤ target_ms
+		for s.occupy > s.target && s.heap.Len() > 0 {
+			s.heap.PopPacket()
+			s.updateOccupancy()
 		}
 	}
-	// If heap empty for > underflow_guard_ms → pause cursor (rebuffer_burst_ms) and log underflow.
 
-	packet.PayloadTs = time.Unix(0, int64(ntp*1e9))
-	heap.Push(s.heap, &packet)
-	s.occupy = now.Sub(s.heap.Peek().PayloadTs)
+	packet.PayloadTs = packetPts
+	s.heap.PushPacket(&packet)
+	s.updateOccupancy()
 
-	return StatusAccepted, nil
+	return status, nil
 }
 
 func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (Packet, bool) {
@@ -141,35 +171,27 @@ func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (Packet, bool) {
 		return Packet{}, false
 	}
 
-	p := s.heap.Peek()
-	if p != nil {
-		// check if packet is ready to be popped based on current time and target buffer size
-		// packet_pts + target_ms ≤ now
-		cursor := now.Add(-s.target)
-		ready := p.PayloadTs.Before(cursor) || p.PayloadTs.Equal(cursor)
-		if ready {
-			s.mu.Lock()
-			defer s.mu.Unlock()
-			s.occupy -= now.Sub(p.PayloadTs)
-			s.lastPop = now
-			p = heap.Pop(s.heap).(*Packet)
-			return *p, true
-		}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
+	p := s.heap.PeekPacket()
+	if p == nil {
 		return Packet{}, false
 	}
 
-	// in consumer routine:
-	// for {
-	//     pkt, ok := jb.buf.Pop(ssrc, time.Now())
-	//     if ok {
-	//         out <- pkt
-	//     } else {
-	//         time.Sleep(time.Millisecond)
-	//     }
-	// }
+	// check if packet is ready to be popped based on current time and target buffer size
+	// packet_pts + target_ms ≤ now
+	cursor := now.Add(-s.target).Add(-s.burst)
+	ready := p.PayloadTs.Before(cursor) || p.PayloadTs.Equal(cursor)
 
-	return Packet{}, false
+	if !ready {
+		return Packet{}, false
+	}
+
+	s.lastPop = now
+	p = s.heap.PopPacket()
+	s.updateOccupancy()
+	return *p, true
 }
 
 func (jb *jitterBuffer) Occupancy(ssrc uint32) time.Duration {
@@ -184,4 +206,19 @@ func (jb *jitterBuffer) Target() time.Duration {
 	defer jb.mu.Unlock()
 
 	return jb.cfg.Target
+}
+
+func (sb *SSRCBuffer) updateOccupancy() {
+	oldest := sb.heap.PeekPacket()
+	newest := sb.heap.PeekMaxPacket()
+
+	if oldest != nil && newest != nil {
+		sb.occupy = newest.PayloadTs.Sub(oldest.PayloadTs)
+	} else {
+		sb.occupy = 0
+	}
+}
+
+func dupeKeyEquals(a, b dupeKey) bool {
+	return a.pts == b.pts && a.seq == b.seq
 }
