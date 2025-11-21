@@ -29,6 +29,11 @@ type driftSample struct {
 	errS float64   // seconds (arrival - expected), positive means packets arrive late (sender is slow), negative means packets arrive early (sender is fast)
 }
 
+// driftSampleEquals is used to compare two driftSample values for equality.
+func driftSampleEquals(a, b driftSample) bool {
+	return a.at == b.at
+}
+
 // DriftConfig captures the thresholds and smoothing constants used while
 // estimating the difference between sender and receiver clocks.
 //
@@ -120,7 +125,7 @@ func (d *Drift) Observe(ssrc uint32, expected, arrival time.Time) DriftAssessmen
 	sd, ok := d.dm[ssrc]
 	if !ok {
 		sd = &ssrcDrift{
-			samples: NewRingBuffer[driftSample](d.cfg.MaxSamples),
+			samples: NewRingBuffer[driftSample](d.cfg.MaxSamples, driftSampleEquals),
 			cfg:     &d.cfg,
 		}
 		d.dm[ssrc] = sd
