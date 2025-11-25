@@ -46,8 +46,8 @@ type Config struct {
 }
 
 type dupeKey struct {
-	pts int64
-	seq uint16
+	pts int64  // packet timestamp in nanos
+	seq uint16 // packet sequence number
 }
 
 type SSRCBuffer struct {
@@ -96,20 +96,20 @@ func NewBuffer(mapper *clock.ClockMapper, cfg *Config) Buffer {
 func (jb *jitterBuffer) Push(ssrc uint32, packet Packet, mapperState clock.MapperState) (Status, error) {
 	jb.mu.Lock()
 
-	s, ok := jb.streams[ssrc]
+	sbuf, ok := jb.streams[ssrc]
 
 	// Initialize per-SSRC packet heap if not present
 	if !ok {
 		sb := SSRCBuffer{heap: &PacketHeap{}, mu: sync.Mutex{}, occupy: 0, lastPop: time.Time{}, target: jb.cfg.Target,
 			burst: 0, recent: *media.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize)}
 		jb.streams[ssrc] = &sb
-		s = &sb
+		sbuf = &sb
 	}
 
 	jb.mu.Unlock()
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	sbuf.mu.Lock()
+	defer sbuf.mu.Unlock()
 	packetNtp, state, err := jb.mapper.RTPToNTP(ssrc, packet.RtpTs)
 
 	if err != nil {
@@ -121,27 +121,36 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet, mapperState clock.Mappe
 	// if state.Degraded buffer size is increased to max_target_ms
 	if state.Degraded {
 		// if mapper degraded, use max target
-		s.target = jb.cfg.MaxTarget
+		sbuf.target = jb.cfg.MaxTarget
 		status = StatusMapperDegraded
 	} else {
-		s.target = jb.cfg.Target
+		sbuf.target = jb.cfg.Target
 	}
 
 	now := time.Now()
-	cursor := now.Add(-s.target).Add(s.burst)
-	head := s.heap.PeekPacket()
-	packetPts := time.Unix(0, int64(packetNtp*1e9))
+	cursor := now.Add(-sbuf.target).Add(sbuf.burst)
+	head := sbuf.heap.PeekPacket()
+	pts := int64(packetNtp*1e9 + 0.5) // nano sec half-up rounded to int
+	packetPts := time.Unix(0, pts)
+
+	dupKey := dupeKey{pts: pts, seq: packet.Seq}
+	if sbuf.recent.Has(dupKey) {
+		status = StatusDuplicate
+		return status, nil
+	} else {
+		sbuf.recent.Push(dupKey)
+	}
 
 	// first packet after underflow
 	if head == nil {
-		s.occupy = 0
+		sbuf.occupy = 0
 	} else {
 		// If heap empty for > underflow_guard_ms → pause cursor (rebuffer_burst_ms) and log underflow.
-		if s.heap.Len() == 0 && !s.lastPop.IsZero() && now.Sub(s.lastPop) > jb.cfg.UndeflowGuard {
-			s.burst = jb.cfg.RebufferBurst
+		if sbuf.heap.Len() == 0 && !sbuf.lastPop.IsZero() && now.Sub(sbuf.lastPop) > jb.cfg.UndeflowGuard {
+			sbuf.burst = jb.cfg.RebufferBurst
 			status = StatusRebuffering
 		} else {
-			s.burst = 0
+			sbuf.burst = 0
 		}
 
 		if packetPts.Before(cursor.Add(-jb.cfg.LateDrop)) {
@@ -150,15 +159,15 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet, mapperState clock.Mappe
 		}
 
 		// drop oldest packets until occupancy ≤ target_ms
-		for s.occupy > s.target && s.heap.Len() > 0 {
-			s.heap.PopPacket()
-			s.updateOccupancy()
+		for sbuf.occupy > sbuf.target && sbuf.heap.Len() > 0 {
+			sbuf.heap.PopPacket()
+			sbuf.updateOccupancy()
 		}
 	}
 
 	packet.PayloadTs = packetPts
-	s.heap.PushPacket(&packet)
-	s.updateOccupancy()
+	sbuf.heap.PushPacket(&packet)
+	sbuf.updateOccupancy()
 
 	return status, nil
 }
