@@ -4,11 +4,8 @@ import (
 	"testing"
 )
 
-// intEqual is a helper for comparing ints.
-func intEqual(a, b int) bool { return a == b }
-
 func TestRingBuffer_Values_Empty(t *testing.T) {
-	rb := NewRingBuffer[int](5, intEqual)
+	rb := NewRingBuffer[int](5)
 
 	values := rb.Values()
 	if rb.size != 0 {
@@ -25,7 +22,7 @@ func TestRingBuffer_Values_Empty(t *testing.T) {
 }
 
 func TestRingBuffer_Values_Partial(t *testing.T) {
-	rb := NewRingBuffer[int](5, intEqual)
+	rb := NewRingBuffer[int](5)
 	rb.Push(1)
 	rb.Push(2)
 	rb.Push(3)
@@ -49,7 +46,7 @@ func TestRingBuffer_Values_Partial(t *testing.T) {
 }
 
 func TestRingBuffer_Values_FullAndWrap(t *testing.T) {
-	rb := NewRingBuffer[int](3, intEqual)
+	rb := NewRingBuffer[int](3)
 	rb.Push(1)
 	rb.Push(2)
 	rb.Push(3)
@@ -74,7 +71,7 @@ func TestRingBuffer_Values_FullAndWrap(t *testing.T) {
 }
 
 func TestRingBuffer_Has(t *testing.T) {
-	rb := NewRingBuffer[int](3, intEqual)
+	rb := NewRingBuffer[int](3)
 	rb.Push(10)
 	rb.Push(20)
 	rb.Push(30)

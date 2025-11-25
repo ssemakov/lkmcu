@@ -1,6 +1,6 @@
 package clock
 
-type RingBuffer[T any] struct {
+type RingBuffer[T comparable] struct {
 	data     []T
 	head     int
 	size     int
@@ -8,18 +8,14 @@ type RingBuffer[T any] struct {
 	equalsFn func(a, b T) bool
 }
 
-func NewRingBuffer[T any](capacity int, equalsFn func(a, b T) bool) *RingBuffer[T] {
+func NewRingBuffer[T comparable](capacity int) *RingBuffer[T] {
 	if capacity <= 0 {
 		panic("capacity must be greater than 0")
 	}
-	if equalsFn == nil {
-		panic("equalsFn must not be nil")
-	}
 
 	return &RingBuffer[T]{
-		data:     make([]T, capacity),
-		cap:      capacity,
-		equalsFn: equalsFn,
+		data: make([]T, capacity),
+		cap:  capacity,
 	}
 }
 
@@ -46,7 +42,7 @@ func (rb *RingBuffer[T]) Values() []T {
 
 func (rb *RingBuffer[T]) Has(key T) bool {
 	for _, k := range rb.data {
-		if rb.equalsFn(k, key) {
+		if k == key {
 			return true
 		}
 	}

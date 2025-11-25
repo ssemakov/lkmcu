@@ -100,7 +100,7 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet, mapperState clock.Mappe
 	// Initialize per-SSRC packet heap if not present
 	if !ok {
 		sb := SSRCBuffer{heap: &PacketHeap{}, mu: sync.Mutex{}, occupy: 0, lastPop: time.Time{}, target: jb.cfg.Target,
-			burst: 0, recent: *clock.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize, dupeKeyEquals)}
+			burst: 0, recent: *clock.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize)}
 		jb.streams[ssrc] = &sb
 		s = &sb
 	}
@@ -217,8 +217,4 @@ func (sb *SSRCBuffer) updateOccupancy() {
 	} else {
 		sb.occupy = 0
 	}
-}
-
-func dupeKeyEquals(a, b dupeKey) bool {
-	return a.pts == b.pts && a.seq == b.seq
 }
