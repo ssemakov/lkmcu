@@ -1,4 +1,5 @@
 bin/
+.vscode/
 .env
 .DS_Store
 *.log
