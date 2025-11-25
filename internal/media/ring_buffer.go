@@ -1,4 +1,4 @@
-package clock
+package media
 
 type RingBuffer[T comparable] struct {
 	data     []T

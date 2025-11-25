@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ssemakov/lkmcu/internal/media"
 	"github.com/ssemakov/lkmcu/internal/media/clock"
 )
 
@@ -55,7 +56,7 @@ type SSRCBuffer struct {
 	lastPop time.Time
 	target  time.Duration
 	burst   time.Duration
-	recent  clock.RingBuffer[dupeKey] // recent packets for duplicate detection, simple alternative to a full LRU cache
+	recent  media.RingBuffer[dupeKey] // recent packets for duplicate detection, simple alternative to a full LRU cache
 
 	mu sync.Mutex
 }
@@ -100,7 +101,7 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet, mapperState clock.Mappe
 	// Initialize per-SSRC packet heap if not present
 	if !ok {
 		sb := SSRCBuffer{heap: &PacketHeap{}, mu: sync.Mutex{}, occupy: 0, lastPop: time.Time{}, target: jb.cfg.Target,
-			burst: 0, recent: *clock.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize)}
+			burst: 0, recent: *media.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize)}
 		jb.streams[ssrc] = &sb
 		s = &sb
 	}
