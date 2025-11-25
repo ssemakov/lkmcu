@@ -51,12 +51,13 @@ type dupeKey struct {
 }
 
 type SSRCBuffer struct {
-	heap    *PacketHeap
-	occupy  time.Duration
-	lastPop time.Time
-	target  time.Duration
-	burst   time.Duration
-	recent  media.RingBuffer[dupeKey] // recent packets for duplicate detection, simple alternative to a full LRU cache
+	heap    *PacketHeap   // Min Heap to Push/Pop packets in desired order
+	occupy  time.Duration // occupancy of the buffer in ms
+	lastPop time.Time     // When did we last time Pop
+	target  time.Duration // target buffer duration
+	//burst   time.Duration
+	freezeUntil time.Time                 // freeze cursor until time (according to config.RebufferBurst) to allow packets catchup
+	recent      media.RingBuffer[dupeKey] // recent packets for duplicate detection, simple alternative to a full LRU cache
 
 	mu sync.Mutex
 }
@@ -77,12 +78,17 @@ func DefaultConfig() *Config {
 		RebufferBurst:   20 * time.Millisecond,
 		UndeflowGuard:   20 * time.Millisecond,
 		MaxReorderDepth: 50,
+		DupeBufferSize:  100,
 	}
 }
 
 func NewBuffer(mapper *clock.ClockMapper, cfg *Config) Buffer {
 	if cfg == nil {
 		cfg = DefaultConfig()
+	}
+
+	if cfg.DupeBufferSize < cfg.MaxReorderDepth {
+		panic("DupeBufferSize must be >= MaxReorderDepth")
 	}
 
 	return &jitterBuffer{
@@ -100,8 +106,8 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet, mapperState clock.Mappe
 
 	// Initialize per-SSRC packet heap if not present
 	if !ok {
-		sb := SSRCBuffer{heap: &PacketHeap{}, mu: sync.Mutex{}, occupy: 0, lastPop: time.Time{}, target: jb.cfg.Target,
-			burst: 0, recent: *media.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize)}
+		sb := SSRCBuffer{heap: &PacketHeap{}, mu: sync.Mutex{}, lastPop: time.Time{}, target: jb.cfg.Target,
+			recent: *media.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize)}
 		jb.streams[ssrc] = &sb
 		sbuf = &sb
 	}
@@ -119,6 +125,9 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet, mapperState clock.Mappe
 	status := StatusAccepted
 
 	// if state.Degraded buffer size is increased to max_target_ms
+	// TODO:
+	// 1. late-drop threshold must adjust differently (more forgiving)
+	// 2. Pop must become more conservative
 	if state.Degraded {
 		// if mapper degraded, use max target
 		sbuf.target = jb.cfg.MaxTarget
@@ -128,40 +137,36 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet, mapperState clock.Mappe
 	}
 
 	now := time.Now()
-	cursor := now.Add(-sbuf.target).Add(sbuf.burst)
-	head := sbuf.heap.PeekPacket()
 	pts := int64(packetNtp*1e9 + 0.5) // nano sec half-up rounded to int
-	packetPts := time.Unix(0, pts)
 
 	dupKey := dupeKey{pts: pts, seq: packet.Seq}
 	if sbuf.recent.Has(dupKey) {
-		status = StatusDuplicate
-		return status, nil
+		return StatusDuplicate, nil
 	} else {
 		sbuf.recent.Push(dupKey)
 	}
 
+	// If heap empty for > underflow_guard_ms → pause cursor (rebuffer_burst_ms) and log underflow.
+	if sbuf.heap.Len() == 0 && !sbuf.lastPop.IsZero() && now.Sub(sbuf.lastPop) > jb.cfg.UndeflowGuard {
+		sbuf.freezeUntil = sbuf.freezeUntil.Add(-sbuf.target)
+		return StatusRebuffering, nil
+	}
+
+	crs := sbuf.cursor(now)
+	head := sbuf.heap.PeekPacket()
+	packetPts := time.Unix(0, pts)
+
+	// Drop late packets
+	if packetPts.Before(crs.Add(-jb.cfg.LateDrop)) {
+		return StatusLateDrop, nil
+	}
+
 	// first packet after underflow
-	if head == nil {
-		sbuf.occupy = 0
-	} else {
-		// If heap empty for > underflow_guard_ms → pause cursor (rebuffer_burst_ms) and log underflow.
-		if sbuf.heap.Len() == 0 && !sbuf.lastPop.IsZero() && now.Sub(sbuf.lastPop) > jb.cfg.UndeflowGuard {
-			sbuf.burst = jb.cfg.RebufferBurst
-			status = StatusRebuffering
-		} else {
-			sbuf.burst = 0
-		}
-
-		if packetPts.Before(cursor.Add(-jb.cfg.LateDrop)) {
-			// return immediately without adding packet to heap
-			return StatusLateDrop, nil
-		}
-
+	if head != nil {
 		// drop oldest packets until occupancy ≤ target_ms
 		for sbuf.occupy > sbuf.target && sbuf.heap.Len() > 0 {
-			sbuf.heap.PopPacket()
 			sbuf.updateOccupancy()
+			sbuf.heap.PopPacket()
 		}
 	}
 
@@ -174,33 +179,34 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet, mapperState clock.Mappe
 
 func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (Packet, bool) {
 	jb.mu.Lock()
-	s, ok := jb.streams[ssrc]
+	sbuf, ok := jb.streams[ssrc]
 	jb.mu.Unlock()
 
 	if !ok {
 		return Packet{}, false
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	sbuf.mu.Lock()
+	defer sbuf.mu.Unlock()
 
-	p := s.heap.PeekPacket()
+	p := sbuf.heap.PeekPacket()
 	if p == nil {
+		// If heap empty and cursor > last_packet_pts + guard_ms:
+		// → underflow → burst, request keyframe (video)
 		return Packet{}, false
 	}
 
 	// check if packet is ready to be popped based on current time and target buffer size
-	// packet_pts + target_ms ≤ now
-	cursor := now.Add(-s.target).Add(-s.burst)
-	ready := p.PayloadTs.Before(cursor) || p.PayloadTs.Equal(cursor)
+	crs := sbuf.cursor(now)
+	ready := p.PayloadTs.Before(crs) || p.PayloadTs.Equal(crs)
 
 	if !ready {
 		return Packet{}, false
 	}
 
-	s.lastPop = now
-	p = s.heap.PopPacket()
-	s.updateOccupancy()
+	sbuf.lastPop = now
+	p = sbuf.heap.PopPacket()
+	sbuf.updateOccupancy()
 	return *p, true
 }
 
@@ -227,4 +233,13 @@ func (sb *SSRCBuffer) updateOccupancy() {
 	} else {
 		sb.occupy = 0
 	}
+}
+
+func (sb *SSRCBuffer) cursor(now time.Time) time.Time {
+	if now.Before(sb.freezeUntil) {
+		// cursor stays frozen at the freeze start moment
+		return sb.freezeUntil.Add(-sb.target)
+	}
+
+	return now.Add(-sb.target)
 }
