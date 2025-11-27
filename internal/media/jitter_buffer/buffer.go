@@ -51,11 +51,10 @@ type dupeKey struct {
 }
 
 type SSRCBuffer struct {
-	heap    *PacketHeap   // Min Heap to Push/Pop packets in desired order
-	occupy  time.Duration // occupancy of the buffer in ms
-	lastPop time.Time     // When did we last time Pop
-	target  time.Duration // target buffer duration
-	//burst   time.Duration
+	heap        *PacketHeap               // Min Heap to Push/Pop packets in desired order
+	occupy      time.Duration             // occupancy of the buffer in ms
+	lastPop     time.Time                 // When did we last time Pop
+	target      time.Duration             // target buffer duration
 	freezeUntil time.Time                 // freeze cursor until time (according to config.RebufferBurst) to allow packets catchup
 	recent      media.RingBuffer[dupeKey] // recent packets for duplicate detection, simple alternative to a full LRU cache
 

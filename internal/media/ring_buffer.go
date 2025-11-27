@@ -1,11 +1,10 @@
 package media
 
 type RingBuffer[T comparable] struct {
-	data     []T
-	head     int
-	size     int
-	cap      int
-	equalsFn func(a, b T) bool
+	data []T
+	head int
+	size int
+	cap  int
 }
 
 func NewRingBuffer[T comparable](capacity int) *RingBuffer[T] {
