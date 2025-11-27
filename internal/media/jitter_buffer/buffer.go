@@ -1,3 +1,9 @@
+// Package jitter_buffer implements a simple, adaptive RTP jitter buffer
+// suitable for audio/video playout. It smooths inter‑arrival jitter by
+// admitting, ordering, and releasing packets against a playout cursor on
+// a stable clock produced by the clock mapper.
+//
+// Design notes and expected behavior are described in docs/jitter_buffer.md.
 package jitter_buffer
 
 import (
@@ -11,15 +17,35 @@ import (
 type Status int
 
 const (
+	// StatusAccepted indicates the packet was admitted into the buffer.
 	StatusAccepted Status = iota
+	// StatusDuplicate indicates the packet matched a recently seen
+	// {timestamp, sequence} pair and was ignored.
 	StatusDuplicate
+	// StatusLateDrop indicates the packet arrived too far behind the
+	// playout cursor and was dropped (see Config.LateDrop).
 	StatusLateDrop
+	// StatusMapperDegraded indicates the packet was admitted but the
+	// RTP→NTP clock mapper reported a degraded state; the buffer widens
+	// to Config.MaxTarget for this SSRC while degraded. See docs/jitter_buffer.md.
 	StatusMapperDegraded
+	// StatusMapperError indicates RTP→NTP conversion failed; the packet
+	// was not admitted and an error is returned.
 	StatusMapperError
 )
 
+// PacketPayload is the raw payload carried by an RTP packet.
 type PacketPayload []byte
 
+// Packet represents a single RTP packet with both its original RTP
+// metadata and a mapped presentation timestamp on the master clock.
+//
+// Fields:
+//   - RtpTs: RTP timestamp as received on the wire.
+//   - PayloadTs: Presentation timestamp on the master clock (NTP‑like),
+//     filled by the jitter buffer using the clock mapper during Push.
+//   - Seq: RTP sequence number.
+//   - Payload: raw payload bytes.
 type Packet struct {
 	RtpTs     uint32
 	PayloadTs time.Time
@@ -27,13 +53,44 @@ type Packet struct {
 	Payload   PacketPayload
 }
 
+// Buffer provides a concurrency‑safe jitter buffer interface keyed by SSRC.
+//
+// Contract (see docs/jitter_buffer.md):
+//   - Push() admits packets, dropping late or duplicate packets.
+//   - Pop() releases the next packet when its presentation timestamp is
+//     ≤ the playout cursor (now - target).
+//   - Occupancy() reports the time span between newest and oldest buffered
+//     packets for the given SSRC.
+//   - Target() reports the effective target depth for that SSRC; it
+//     reflects mapper-driven widening. For unknown SSRCs, returns the
+//     nominal configured target.
+//
+// Concurrency: safe for concurrent Push/Pop across SSRCs, and safe for
+// concurrent Push/Pop on the same SSRC.
 type Buffer interface {
 	Push(ssrc uint32, packet Packet) (Status, error)
 	Pop(ssrc uint32, now time.Time) (Packet, bool)
 	Occupancy(ssrc uint32) time.Duration
-	Target() time.Duration
+	Target(ssrc uint32) time.Duration
 }
 
+// Config controls jitter buffer behavior. All durations are in time.Duration.
+// Defaults follow the guidance in docs/jitter_buffer.md.
+//
+// Notes:
+//   - LateDrop defines how far behind the playout cursor a packet may be
+//     before it is dropped as too late.
+//   - MaxTarget is the maximum buffer depth; when occupancy grows beyond
+//     this value, oldest packets are dropped to cap latency.
+//   - Target is the nominal buffer depth used in steady state; during clock
+//     mapper degradation the effective per‑SSRC target widens to MaxTarget.
+//   - RebufferBurst pauses the playout cursor by this amount when an
+//     underflow is detected, allowing packets to catch up.
+//   - UndeflowGuard is the duration an empty buffer must persist after
+//     the last pop before underflow handling is triggered.
+//   - MaxReorderDepth bounds tolerated reordering (in packets) to cap memory.
+//   - DupeBufferSize must be ≥ MaxReorderDepth and limits the sliding window
+//     used for duplicate detection.
 type Config struct {
 	LateDrop        time.Duration // packets older than target_ms + late_drop_ms are dropped
 	MaxTarget       time.Duration // when Occupancy > max_target_ms start dropping oldest packets
@@ -49,18 +106,25 @@ type dupeKey struct {
 	seq uint16 // packet sequence number
 }
 
+// SSRCBuffer holds the per‑SSRC state: the timestamp‑ordered packet heap,
+// target depth, and recent‑packet filter used for duplicate detection.
+//
+// This type is exposed for tests and debugging; external users should use
+// the Buffer interface.
 type SSRCBuffer struct {
-	heap         *PacketHeap               // Min Heap to Push/Pop packets in desired order
-	occupy       time.Duration             // occupancy of the buffer in ms
-	lastPopPts   time.Time                 // last pop-ed packet PTS (packet timestamp)
-	target       time.Duration             // target buffer duration
-	freezeUntil  time.Time                 // freeze cursor until time (according to config.RebufferBurst) to allow packets catchup
-	freezeCursor time.Time                 // Moment at which cursor is frozen
-	recent       media.RingBuffer[dupeKey] // recent packets for duplicate detection, simple alternative to a full LRU cache
+	heap         *PacketHeap               // Min heap to Push/Pop packets in presentation order
+	occupy       time.Duration             // Current occupancy (newest.PTS - oldest.PTS)
+	lastPopPts   time.Time                 // Last popped packet presentation timestamp
+	target       time.Duration             // Effective target buffer duration for this SSRC
+	freezeUntil  time.Time                 // Cursor freeze deadline used during rebuffering
+	freezeCursor time.Time                 // Cursor value while frozen
+	recent       media.RingBuffer[dupeKey] // Sliding window used for duplicate detection
 
 	mu sync.Mutex
 }
 
+// OnUnderflowHandler is invoked when an SSRC experiences buffer underflow.
+// Typical handlers request a keyframe for video or log diagnostics.
 type OnUnderflowHandler func(ssrc uint32)
 type jitterBuffer struct {
 	streams     map[uint32]*SSRCBuffer // per-SSRC packet heaps
@@ -71,6 +135,8 @@ type jitterBuffer struct {
 	mu sync.Mutex
 }
 
+// DefaultConfig returns a Config populated with conservative defaults that
+// provide stable playout under typical jitter. See docs/jitter_buffer.md.
 func DefaultConfig() *Config {
 	return &Config{
 		LateDrop:        20 * time.Millisecond,
@@ -83,6 +149,9 @@ func DefaultConfig() *Config {
 	}
 }
 
+// NewBuffer creates a Buffer backed by a clock mapper and configuration.
+// If cfg is nil, DefaultConfig is used. If onUnderflow is nil, a no‑op
+// handler is installed. NewBuffer panics if DupeBufferSize < MaxReorderDepth.
 func NewBuffer(mapper *clock.ClockMapper, cfg *Config, onUnderflow OnUnderflowHandler) Buffer {
 	if cfg == nil {
 		cfg = DefaultConfig()
@@ -105,6 +174,17 @@ func NewBuffer(mapper *clock.ClockMapper, cfg *Config, onUnderflow OnUnderflowHa
 	}
 }
 
+// Push admits an RTP packet into the jitter buffer for the given SSRC.
+// It converts RTP timestamp to a presentation timestamp using the mapper
+// and enqueues the packet in timestamp order.
+//
+// Return values:
+//   - StatusAccepted on success
+//   - StatusDuplicate if a recent packet with the same {timestamp, sequence}
+//     was seen and the packet is ignored
+//   - StatusLateDrop if the packet arrived later than cursor - LateDrop
+//   - StatusMapperDegraded if admitted while the mapper is degraded
+//   - StatusMapperError with a non‑nil error if RTP→NTP mapping failed
 func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 	jb.mu.Lock()
 
@@ -173,6 +253,11 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 	return status, nil
 }
 
+// Pop returns the next ready packet for the given SSRC at time now.
+// A packet is ready when its presentation timestamp is ≤ the playout
+// cursor (now - target). If the buffer is empty for longer than
+// Config.UndeflowGuard after the last pop, the cursor is temporarily
+// frozen by Config.RebufferBurst and onUnderflow is invoked.
 func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (Packet, bool) {
 	jb.mu.Lock()
 	sbuf, ok := jb.streams[ssrc]
@@ -217,16 +302,30 @@ func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (Packet, bool) {
 	return *p, true
 }
 
+// Occupancy reports the current time span between the newest and oldest
+// packets in the buffer for the given SSRC.
 func (jb *jitterBuffer) Occupancy(ssrc uint32) time.Duration {
 	jb.mu.Lock()
 	defer jb.mu.Unlock()
 
-	return jb.streams[ssrc].occupy
+	sbuf := jb.streams[ssrc]
+	if sbuf != nil {
+		return sbuf.occupy
+	}
+
+	return 0
 }
 
-func (jb *jitterBuffer) Target() time.Duration {
+// Target returns the effective target buffer depth for the given SSRC.
+// If the SSRC is unknown, it returns the nominal configured target.
+func (jb *jitterBuffer) Target(ssrc uint32) time.Duration {
 	jb.mu.Lock()
 	defer jb.mu.Unlock()
+
+	sbuf := jb.streams[ssrc]
+	if sbuf != nil {
+		return sbuf.target
+	}
 
 	return jb.cfg.Target
 }
