@@ -40,7 +40,7 @@ func (rb *RingBuffer[T]) Values() []T {
 }
 
 func (rb *RingBuffer[T]) Has(key T) bool {
-	for _, k := range rb.data {
+	for _, k := range rb.Values() {
 		if k == key {
 			return true
 		}

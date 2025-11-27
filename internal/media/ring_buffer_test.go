@@ -101,3 +101,11 @@ func TestRingBuffer_Has(t *testing.T) {
 		t.Errorf("Has(40): expected true after wrap, got false")
 	}
 }
+
+func TestRingBuffer_HasZeroValues(t *testing.T) {
+	rb := NewRingBuffer[int](3)
+
+	if rb.Has(0) {
+		t.Errorf("Has(0) on empty buffer: expected false, got true")
+	}
+}
