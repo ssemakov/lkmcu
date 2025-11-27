@@ -16,7 +16,6 @@ const (
 	StatusLateDrop
 	StatusMapperDegraded
 	StatusMapperError
-	StatusRebuffering
 )
 
 type PacketPayload []byte
@@ -29,7 +28,7 @@ type Packet struct {
 }
 
 type Buffer interface {
-	Push(ssrc uint32, packet Packet, mapperState clock.MapperState) (Status, error)
+	Push(ssrc uint32, packet Packet) (Status, error)
 	Pop(ssrc uint32, now time.Time) (Packet, bool)
 	Occupancy(ssrc uint32) time.Duration
 	Target() time.Duration
@@ -51,20 +50,23 @@ type dupeKey struct {
 }
 
 type SSRCBuffer struct {
-	heap        *PacketHeap               // Min Heap to Push/Pop packets in desired order
-	occupy      time.Duration             // occupancy of the buffer in ms
-	lastPop     time.Time                 // When did we last time Pop
-	target      time.Duration             // target buffer duration
-	freezeUntil time.Time                 // freeze cursor until time (according to config.RebufferBurst) to allow packets catchup
-	recent      media.RingBuffer[dupeKey] // recent packets for duplicate detection, simple alternative to a full LRU cache
+	heap         *PacketHeap               // Min Heap to Push/Pop packets in desired order
+	occupy       time.Duration             // occupancy of the buffer in ms
+	lastPopPts   time.Time                 // last pop-ed packet PTS (packet timestamp)
+	target       time.Duration             // target buffer duration
+	freezeUntil  time.Time                 // freeze cursor until time (according to config.RebufferBurst) to allow packets catchup
+	freezeCursor time.Time                 // Moment at which cursor is frozen
+	recent       media.RingBuffer[dupeKey] // recent packets for duplicate detection, simple alternative to a full LRU cache
 
 	mu sync.Mutex
 }
 
+type OnUnderflowHandler func(ssrc uint32)
 type jitterBuffer struct {
-	streams map[uint32]*SSRCBuffer // per-SSRC packet heaps
-	mapper  *clock.ClockMapper
-	cfg     *Config
+	streams     map[uint32]*SSRCBuffer // per-SSRC packet heaps
+	mapper      *clock.ClockMapper
+	cfg         *Config
+	onUnderflow OnUnderflowHandler
 
 	mu sync.Mutex
 }
@@ -81,9 +83,13 @@ func DefaultConfig() *Config {
 	}
 }
 
-func NewBuffer(mapper *clock.ClockMapper, cfg *Config) Buffer {
+func NewBuffer(mapper *clock.ClockMapper, cfg *Config, onUnderflow OnUnderflowHandler) Buffer {
 	if cfg == nil {
 		cfg = DefaultConfig()
+	}
+
+	if onUnderflow == nil {
+		onUnderflow = func(_ uint32) {}
 	}
 
 	if cfg.DupeBufferSize < cfg.MaxReorderDepth {
@@ -91,21 +97,22 @@ func NewBuffer(mapper *clock.ClockMapper, cfg *Config) Buffer {
 	}
 
 	return &jitterBuffer{
-		streams: make(map[uint32]*SSRCBuffer),
-		mapper:  mapper,
-		cfg:     cfg,
-		mu:      sync.Mutex{},
+		streams:     make(map[uint32]*SSRCBuffer),
+		mapper:      mapper,
+		cfg:         cfg,
+		onUnderflow: onUnderflow,
+		mu:          sync.Mutex{},
 	}
 }
 
-func (jb *jitterBuffer) Push(ssrc uint32, packet Packet, mapperState clock.MapperState) (Status, error) {
+func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 	jb.mu.Lock()
 
 	sbuf, ok := jb.streams[ssrc]
 
 	// Initialize per-SSRC packet heap if not present
 	if !ok {
-		sb := SSRCBuffer{heap: &PacketHeap{}, mu: sync.Mutex{}, lastPop: time.Time{}, target: jb.cfg.Target,
+		sb := SSRCBuffer{heap: &PacketHeap{}, mu: sync.Mutex{}, target: jb.cfg.Target,
 			recent: *media.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize)}
 		jb.streams[ssrc] = &sb
 		sbuf = &sb
@@ -145,33 +152,23 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet, mapperState clock.Mappe
 		sbuf.recent.Push(dupKey)
 	}
 
-	// If heap empty for > underflow_guard_ms → pause cursor (rebuffer_burst_ms) and log underflow.
-	if sbuf.heap.Len() == 0 && !sbuf.lastPop.IsZero() && now.Sub(sbuf.lastPop) > jb.cfg.UndeflowGuard {
-		sbuf.freezeUntil = sbuf.freezeUntil.Add(-sbuf.target)
-		return StatusRebuffering, nil
-	}
-
-	crs := sbuf.cursor(now)
-	head := sbuf.heap.PeekPacket()
+	cursor := sbuf.cursor(now)
 	packetPts := time.Unix(0, pts)
 
 	// Drop late packets
-	if packetPts.Before(crs.Add(-jb.cfg.LateDrop)) {
+	if packetPts.Before(cursor.Add(-jb.cfg.LateDrop)) {
 		return StatusLateDrop, nil
-	}
-
-	// first packet after underflow
-	if head != nil {
-		// drop oldest packets until occupancy ≤ target_ms
-		for sbuf.occupy > sbuf.target && sbuf.heap.Len() > 0 {
-			sbuf.updateOccupancy()
-			sbuf.heap.PopPacket()
-		}
 	}
 
 	packet.PayloadTs = packetPts
 	sbuf.heap.PushPacket(&packet)
 	sbuf.updateOccupancy()
+
+	// drop oldest packets until occupancy ≤ target_ms
+	for sbuf.occupy > sbuf.target && sbuf.heap.Len() > 0 {
+		sbuf.heap.PopPacket()
+		sbuf.updateOccupancy()
+	}
 
 	return status, nil
 }
@@ -188,23 +185,34 @@ func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (Packet, bool) {
 	sbuf.mu.Lock()
 	defer sbuf.mu.Unlock()
 
+	cursor := sbuf.cursor(now)
 	p := sbuf.heap.PeekPacket()
 	if p == nil {
-		// If heap empty and cursor > last_packet_pts + guard_ms:
-		// → underflow → burst, request keyframe (video)
+		if !sbuf.lastPopPts.IsZero() {
+			deadline := sbuf.lastPopPts.Add(jb.cfg.UndeflowGuard)
+			if cursor.After(deadline) {
+				// underflow, freeze cursor
+				if now.After(sbuf.freezeUntil) {
+					sbuf.freezeUntil = now.Add(jb.cfg.RebufferBurst)
+					sbuf.freezeCursor = now.Add(-sbuf.target)
+				}
+
+				// request key frame or whatever else decoder wants to do
+				jb.onUnderflow(ssrc)
+			}
+		}
 		return Packet{}, false
 	}
 
 	// check if packet is ready to be popped based on current time and target buffer size
-	crs := sbuf.cursor(now)
-	ready := p.PayloadTs.Before(crs) || p.PayloadTs.Equal(crs)
+	ready := p.PayloadTs.Before(cursor) || p.PayloadTs.Equal(cursor)
 
 	if !ready {
 		return Packet{}, false
 	}
 
-	sbuf.lastPop = now
 	p = sbuf.heap.PopPacket()
+	sbuf.lastPopPts = p.PayloadTs
 	sbuf.updateOccupancy()
 	return *p, true
 }
@@ -237,7 +245,7 @@ func (sb *SSRCBuffer) updateOccupancy() {
 func (sb *SSRCBuffer) cursor(now time.Time) time.Time {
 	if now.Before(sb.freezeUntil) {
 		// cursor stays frozen at the freeze start moment
-		return sb.freezeUntil.Add(-sb.target)
+		return sb.freezeCursor
 	}
 
 	return now.Add(-sb.target)
