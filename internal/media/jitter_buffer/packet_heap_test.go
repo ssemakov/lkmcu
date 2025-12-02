@@ -78,17 +78,22 @@ func TestPacketHeap_PeekMaxPacket(t *testing.T) {
 	ph.PushPacket(p2)
 	ph.PushPacket(p3)
 
-	max := ph.PeekMaxPacket()
-	if max == nil {
-		t.Fatal("PeekMaxPacket returned nil, want packet")
-	}
-	if max.Seq != 3 {
-		t.Fatalf("PeekMaxPacket Seq=%d want=3", max.Seq)
-	}
+	len := ph.Len()
+	for i := 0; i < len; i++ {
+		max := ph.PeekMaxPacket()
+		if max == nil {
+			t.Fatal("PeekMaxPacket returned nil, want packet")
+		}
+		if max.Seq != 3 {
+			t.Fatalf("PeekMaxPacket Seq=%d want=3", max.Seq)
+		}
 
-	// Ensure heap is unchanged
-	if ph.Len() != 3 {
-		t.Fatalf("Len=%d want=3 after PeekMaxPacket", ph.Len())
+		// Ensure heap is unchanged
+		if ph.Len() != len-i {
+			t.Fatalf("Len=%d want=3 after PeekMaxPacket", ph.Len())
+		}
+
+		ph.PopPacket()
 	}
 }
 

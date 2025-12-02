@@ -53,6 +53,13 @@ type Packet struct {
 	Payload   PacketPayload
 }
 
+func (p *Packet) Less(other *Packet) bool {
+	if p.PayloadTs.Equal(other.PayloadTs) {
+		return p.Seq < other.Seq
+	}
+	return p.PayloadTs.Before(other.PayloadTs)
+}
+
 // Buffer provides a concurrency‑safe jitter buffer interface keyed by SSRC.
 //
 // Contract (see docs/jitter_buffer.md):
