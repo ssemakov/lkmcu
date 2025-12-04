@@ -16,12 +16,12 @@ Describe the buffering strategy that smooths RTP packet arrival variance before 
 ```
                 BUFFER WINDOW
            ------------------------------------------------------------
-PacketTS: |-------- OLD -------|----- READY -----|------ FUTURE ------|
+PacketTS: |-------- OLD -------|----- READY -----|------ UPCOMING ----|
           | too-late | dropped | pop() emits     | still waiting      |
           -------------------------------------------------------------
                 ^                        ^                  ^
                 |                        |                  |
-              cursor - late_drop_ms    cursor(now)       cursor + target_ms
+          cursor - late_drop_ms    cursor(now-target)      now
 ```
 
 Any arriving packet can be
