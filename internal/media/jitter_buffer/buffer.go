@@ -119,9 +119,10 @@ type dupeKey struct {
 // This type is exposed for tests and debugging; external users should use
 // the Buffer interface.
 type SSRCBuffer struct {
-	heap         *PacketHeap               // Min heap to Push/Pop packets in presentation order
-	occupy       time.Duration             // Current occupancy (newest.PTS - oldest.PTS)
-	lastPopPts   time.Time                 // Last popped packet presentation timestamp
+	heap         *PacketHeap   // Min heap to Push/Pop packets in presentation order
+	occupy       time.Duration // Current occupancy (newest.PTS - oldest.PTS)
+	lastPopPts   time.Time     // Last popped packet presentation timestamp
+	lastPopAt    time.Time
 	target       time.Duration             // Effective target buffer duration for this SSRC
 	freezeUntil  time.Time                 // Cursor freeze deadline used during rebuffering
 	freezeCursor time.Time                 // Cursor value while frozen
@@ -209,9 +210,9 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 
 	sbuf.mu.Lock()
 	defer sbuf.mu.Unlock()
-	packetNtp, state, err := jb.mapper.RTPToNTP(ssrc, packet.RtpTs)
+	packetNtp, state, err := jb.mapper.RTPToNTPTime(ssrc, packet.RtpTs)
 
-	if err != nil {
+	if !(state.Degraded || state.Discontinuity) && err != nil {
 		return StatusMapperError, err
 	}
 
@@ -230,7 +231,7 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 	}
 
 	now := time.Now()
-	pts := int64(packetNtp*1e9 + 0.5) // nano sec half-up rounded to int
+	pts := packetNtp.UnixNano()
 
 	dupKey := dupeKey{pts: pts, seq: packet.Seq}
 	if sbuf.recent.Has(dupKey) {
@@ -277,12 +278,11 @@ func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (Packet, bool) {
 	sbuf.mu.Lock()
 	defer sbuf.mu.Unlock()
 
-	cursor := sbuf.cursor(now)
 	p := sbuf.heap.PeekPacket()
 	if p == nil {
 		if !sbuf.lastPopPts.IsZero() {
-			deadline := sbuf.lastPopPts.Add(jb.cfg.UndeflowGuard)
-			if cursor.After(deadline) {
+			deadline := sbuf.lastPopAt.Add(jb.cfg.UndeflowGuard)
+			if now.After(deadline) {
 				// underflow, freeze cursor
 				if now.After(sbuf.freezeUntil) {
 					sbuf.freezeUntil = now.Add(jb.cfg.RebufferBurst)
@@ -296,6 +296,7 @@ func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (Packet, bool) {
 		return Packet{}, false
 	}
 
+	cursor := sbuf.cursor(now)
 	// check if packet is ready to be popped based on current time and target buffer size
 	ready := p.PayloadTs.Before(cursor) || p.PayloadTs.Equal(cursor)
 
@@ -305,6 +306,7 @@ func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (Packet, bool) {
 
 	p = sbuf.heap.PopPacket()
 	sbuf.lastPopPts = p.PayloadTs
+	sbuf.lastPopAt = now
 	sbuf.updateOccupancy()
 	return *p, true
 }
@@ -313,10 +315,13 @@ func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (Packet, bool) {
 // packets in the buffer for the given SSRC.
 func (jb *jitterBuffer) Occupancy(ssrc uint32) time.Duration {
 	jb.mu.Lock()
-	defer jb.mu.Unlock()
+	sbuf, ok := jb.streams[ssrc]
+	jb.mu.Unlock()
 
-	sbuf := jb.streams[ssrc]
-	if sbuf != nil {
+	if ok {
+		sbuf.mu.Lock()
+		defer sbuf.mu.Unlock()
+
 		return sbuf.occupy
 	}
 
@@ -327,10 +332,13 @@ func (jb *jitterBuffer) Occupancy(ssrc uint32) time.Duration {
 // If the SSRC is unknown, it returns the nominal configured target.
 func (jb *jitterBuffer) Target(ssrc uint32) time.Duration {
 	jb.mu.Lock()
-	defer jb.mu.Unlock()
+	sbuf, ok := jb.streams[ssrc]
+	jb.mu.Unlock()
 
-	sbuf := jb.streams[ssrc]
-	if sbuf != nil {
+	if ok {
+		sbuf.mu.Lock()
+		defer sbuf.mu.Unlock()
+
 		return sbuf.target
 	}
 

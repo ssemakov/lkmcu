@@ -172,12 +172,13 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 	srAge := time.Since(sc.lastSRReceivedAt)
 
 	state := MapperState{
-		SRAge:      srAge,
-		Degraded:   sc.degraded,
-		BaseNTP:    sc.baseNTP,
-		BaseRTP:    sc.baseRTP,
-		ClockRate:  sc.clockRate,
-		LastNTPOut: sc.lastNTPOutput,
+		SRAge:       srAge,
+		Degraded:    sc.degraded,
+		BaseNTP:     sc.baseNTP,
+		BaseRTP:     sc.baseRTP,
+		ClockRate:   sc.clockRate,
+		LastNTPOut:  sc.lastNTPOutput,
+		Initialized: true,
 	}
 
 	// SR age check
@@ -231,7 +232,7 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 // Same as RTPToNTP but returns Unix time
 func (cm *ClockMapper) RTPToNTPTime(ssrc, rtpTs uint32) (time.Time, MapperState, error) {
 	ntpFloat, state, err := cm.RTPToNTP(ssrc, rtpTs)
-	if err != nil {
+	if err != nil && ntpFloat == 0 {
 		return time.Time{}, state, err
 	}
 
@@ -245,7 +246,7 @@ func (cm *ClockMapper) RTPToNTPTime(ssrc, rtpTs uint32) (time.Time, MapperState,
 	sec, frac := math.Modf(unix)
 	nsec := frac * 1e9
 
-	return time.Unix(int64(sec), int64(math.Round(nsec))), state, nil
+	return time.Unix(int64(sec), int64(math.Round(nsec))), state, err
 }
 
 // SetClockRate sets the clock rate for the given SSRC stream
