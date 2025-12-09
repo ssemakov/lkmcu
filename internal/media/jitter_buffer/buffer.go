@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ssemakov/lkmcu/internal/logging"
 	"github.com/ssemakov/lkmcu/internal/media"
 	"github.com/ssemakov/lkmcu/internal/media/clock"
 )
@@ -79,6 +80,8 @@ type Buffer interface {
 	Pop(ssrc uint32, now time.Time) (Packet, bool)
 	Occupancy(ssrc uint32) time.Duration
 	Target(ssrc uint32) time.Duration
+
+	Config() *Config
 }
 
 // Config controls jitter buffer behavior. All durations are in time.Duration.
@@ -95,7 +98,7 @@ type Buffer interface {
 //     underflow is detected, allowing packets to catch up.
 //   - UndeflowGuard is the duration an empty buffer must persist after
 //     the last pop before underflow handling is triggered.
-//   - MaxReorderDepth bounds tolerated reordering (in packets) to cap memory.
+//   - MaxReorderDepth bounds tolerated reordering (in packets) to cap memory. (Memory Pressure gauge)
 //   - DupeBufferSize must be ≥ MaxReorderDepth and limits the sliding window
 //     used for duplicate detection.
 type Config struct {
@@ -138,6 +141,7 @@ type jitterBuffer struct {
 	streams     map[uint32]*SSRCBuffer // per-SSRC packet heaps
 	mapper      *clock.ClockMapper
 	cfg         *Config
+	logger      logging.Logger
 	onUnderflow OnUnderflowHandler
 
 	mu sync.Mutex
@@ -160,7 +164,7 @@ func DefaultConfig() *Config {
 // NewBuffer creates a Buffer backed by a clock mapper and configuration.
 // If cfg is nil, DefaultConfig is used. If onUnderflow is nil, a no‑op
 // handler is installed. NewBuffer panics if DupeBufferSize < MaxReorderDepth.
-func NewBuffer(mapper *clock.ClockMapper, cfg *Config, onUnderflow OnUnderflowHandler) Buffer {
+func NewBuffer(mapper *clock.ClockMapper, logger logging.Logger, cfg *Config, onUnderflow OnUnderflowHandler) Buffer {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
@@ -178,6 +182,7 @@ func NewBuffer(mapper *clock.ClockMapper, cfg *Config, onUnderflow OnUnderflowHa
 		mapper:      mapper,
 		cfg:         cfg,
 		onUnderflow: onUnderflow,
+		logger:      logger,
 		mu:          sync.Mutex{},
 	}
 }
@@ -246,6 +251,19 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 	// Drop late packets
 	if packetPts.Before(cursor.Add(-jb.cfg.LateDrop)) {
 		return StatusLateDrop, nil
+	}
+
+	// Memory pressure check, drop overflowing the heap packets
+	if jb.cfg.MaxReorderDepth > 0 && sbuf.heap.Len() > jb.cfg.MaxReorderDepth {
+		overflow := sbuf.heap.Len() - jb.cfg.MaxReorderDepth
+		before := sbuf.heap.Len()
+		for i := 0; i < overflow; i++ {
+			sbuf.heap.PopPacket()
+		}
+		sbuf.updateOccupancy()
+
+		jb.logger.Errorf("JitterBuffer: max_reorder_depth=%d exceeded by %d; dropped oldest for SSRC %08x (len %d→%d, target=%v, occupancy=%v)",
+			jb.cfg.MaxReorderDepth, overflow, ssrc, before, sbuf.heap.Len(), sbuf.target, sbuf.occupy)
 	}
 
 	packet.PayloadTs = packetPts
@@ -343,6 +361,10 @@ func (jb *jitterBuffer) Target(ssrc uint32) time.Duration {
 	}
 
 	return jb.cfg.Target
+}
+
+func (jb *jitterBuffer) Config() *Config {
+	return jb.cfg
 }
 
 func (sb *SSRCBuffer) updateOccupancy() {
