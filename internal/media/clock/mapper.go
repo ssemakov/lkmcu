@@ -1,13 +1,14 @@
 package clock
 
 import (
-	"fmt"
-	"math"
-	"sync"
-	"time"
+    "errors"
+    "fmt"
+    "math"
+    "sync"
+    "time"
 
-	"github.com/ssemakov/lkmcu/internal/logging"
-	"github.com/ssemakov/lkmcu/internal/metrics"
+    "github.com/ssemakov/lkmcu/internal/logging"
+    "github.com/ssemakov/lkmcu/internal/metrics"
 )
 
 // MapperState returned by RTPToNTP for observability
@@ -33,12 +34,30 @@ type ClockMapperConfig struct {
 // ClockMapper maps RTP timestamps to NTP timestamps for multiple streams
 // streamClocks holds the mapping state for each SSRC
 type ClockMapper struct {
-	streamClocks map[uint32]*StreamClock
-	metrics      *metrics.Metrics
-	logger       logging.Logger
-	cfg          ClockMapperConfig
-	m            sync.RWMutex
+    streamClocks map[uint32]*StreamClock
+    metrics      *metrics.Metrics
+    logger       logging.Logger
+    cfg          ClockMapperConfig
+    m            sync.RWMutex
 }
+
+// ErrNoSenderReport is a sentinel error indicating that no RTCP Sender Report
+// has been observed for the given SSRC yet. Use errors.Is(err, ErrNoSenderReport)
+// to detect this condition.
+var ErrNoSenderReport = errors.New("no sender report")
+
+// NoSenderReportError carries the SSRC for which no Sender Report has been seen.
+// It unwraps to ErrNoSenderReport so callers can use errors.Is to detect the
+// condition while still retaining SSRC detail via errors.As.
+type NoSenderReportError struct {
+    SSRC uint32
+}
+
+func (e NoSenderReportError) Error() string {
+    return fmt.Sprintf("no SR seen yet for SSRC %d", e.SSRC)
+}
+
+func (e NoSenderReportError) Unwrap() error { return ErrNoSenderReport }
 
 func DefaultClockMapperConfig() *ClockMapperConfig {
 	return &ClockMapperConfig{
@@ -162,9 +181,9 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
-	if sc.lastSRReceivedAt.IsZero() {
-		return 0, MapperState{}, fmt.Errorf("no SR seen yet for SSRC %d", ssrc)
-	}
+    if sc.lastSRReceivedAt.IsZero() {
+        return 0, MapperState{}, NoSenderReportError{SSRC: ssrc}
+    }
 
 	extRtp := sc.wrapTracker.ExtendedRTP(rtpTs)
 	// predicted NTP
