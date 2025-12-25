@@ -7,6 +7,7 @@
 package jitter_buffer
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -34,6 +35,23 @@ const (
 	// was not admitted and an error is returned.
 	StatusMapperError
 )
+
+func StatusString(status Status) string {
+	switch status {
+	case StatusAccepted:
+		return "StatusAccepted"
+	case StatusDuplicate:
+		return "StatusDuplicate"
+	case StatusLateDrop:
+		return "StatusLateDrop"
+	case StatusMapperDegraded:
+		return "StatusMapperDegraded"
+	case StatusMapperError:
+		return "StatusMapperError"
+	default:
+		return "UnknownStatus"
+	}
+}
 
 // PacketPayload is the raw payload carried by an RTP packet.
 type PacketPayload []byte
@@ -130,6 +148,7 @@ type SSRCBuffer struct {
 	freezeUntil  time.Time                 // Cursor freeze deadline used during rebuffering
 	freezeCursor time.Time                 // Cursor value while frozen
 	recent       media.RingBuffer[dupeKey] // Sliding window used for duplicate detection
+	noSR         bool
 
 	mu sync.Mutex
 }
@@ -206,7 +225,7 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 	// Initialize per-SSRC packet heap if not present
 	if !ok {
 		sb := SSRCBuffer{heap: &PacketHeap{}, mu: sync.Mutex{}, target: jb.cfg.Target,
-			recent: *media.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize)}
+			recent: *media.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize), noSR: true}
 		jb.streams[ssrc] = &sb
 		sbuf = &sb
 	}
@@ -217,7 +236,7 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 	defer sbuf.mu.Unlock()
 	packetNtp, state, err := jb.mapper.RTPToNTPTime(ssrc, packet.RtpTs)
 
-	if !(state.Degraded || state.Discontinuity) && err != nil {
+	if !(state.Degraded || state.Discontinuity) && err != nil && !errors.Is(err, clock.ErrNoSenderReport) {
 		return StatusMapperError, err
 	}
 
@@ -238,6 +257,16 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 	now := time.Now()
 	pts := packetNtp.UnixNano()
 
+	// If there's no SR yet to find the correct PTS,
+	// will take current time and recalculate when SR arrives
+	if err != nil && errors.Is(err, clock.ErrNoSenderReport) {
+		pts = time.Time{}.UnixNano()
+		sbuf.noSR = true
+	} else if sbuf.noSR {
+		jb.recalculatePts(sbuf, ssrc)
+		sbuf.noSR = false
+	}
+
 	dupKey := dupeKey{pts: pts, seq: packet.Seq}
 	if sbuf.recent.Has(dupKey) {
 		return StatusDuplicate, nil
@@ -249,7 +278,9 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 	packetPts := time.Unix(0, pts)
 
 	// Drop late packets
-	if packetPts.Before(cursor.Add(-jb.cfg.LateDrop)) {
+	if !sbuf.noSR && packetPts.Before(cursor.Add(-jb.cfg.LateDrop)) {
+		jb.logger.Debugf("LateDrop: packetPts=%v before cursor=%v (target=%v) - Config.LateDrop=%v",
+			packetPts, cursor, jb.cfg.Target, jb.cfg.LateDrop)
 		return StatusLateDrop, nil
 	}
 
@@ -295,6 +326,10 @@ func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (Packet, bool) {
 
 	sbuf.mu.Lock()
 	defer sbuf.mu.Unlock()
+
+	if sbuf.noSR {
+		return Packet{}, false
+	}
 
 	p := sbuf.heap.PeekPacket()
 	if p == nil {
@@ -365,6 +400,25 @@ func (jb *jitterBuffer) Target(ssrc uint32) time.Duration {
 
 func (jb *jitterBuffer) Config() *Config {
 	return jb.cfg
+}
+
+func (jb *jitterBuffer) recalculatePts(sb *SSRCBuffer, ssrc uint32) {
+	// Thread safety is garanteed by the caller
+	nHeap := &PacketHeap{}
+
+	for sb.heap.Len() > 0 {
+		p := sb.heap.PopPacket()
+		// TODO: this should go through the same dupeKey, drop late, and clock status checks.
+		packetNtp, _, err := jb.mapper.RTPToNTPTime(ssrc, p.RtpTs)
+		if err != nil {
+			continue
+		}
+		pts := packetNtp.UnixNano()
+		p.PayloadTs = time.Unix(0, pts)
+		nHeap.PushPacket(p)
+	}
+
+	sb.heap = nHeap
 }
 
 func (sb *SSRCBuffer) updateOccupancy() {
