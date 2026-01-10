@@ -7,7 +7,7 @@
 package jitter_buffer
 
 import (
-	"errors"
+	"sort"
 	"sync"
 	"time"
 
@@ -234,37 +234,44 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 
 	sbuf.mu.Lock()
 	defer sbuf.mu.Unlock()
-	packetNtp, state, err := jb.mapper.RTPToNTPTime(ssrc, packet.RtpTs)
 
-	if !(state.Degraded || state.Discontinuity) && err != nil && !errors.Is(err, clock.ErrNoSenderReport) {
-		return StatusMapperError, err
+	now := time.Now()
+	pts := now.UnixNano() // default to now if no SR yet
+	srAvailable := jb.mapper.HasSenderReport(ssrc)
+	packetNtp := time.Time{}
+	status := StatusAccepted
+	mapperState := clock.MapperState{}
+	var err error
+
+	// Recalculate PTS for all buffered packets immediately  upon receiving the first SR
+	if sbuf.noSR && srAvailable {
+		jb.logger.Infof("JitterBuffer: SSRC %08x received first SR; exiting no-SR mode", ssrc)
+		jb.recalculatePts(sbuf, ssrc)
+		sbuf.noSR = false
+	} else if !sbuf.noSR && !srAvailable {
+		jb.logger.Infof("JitterBuffer: SSRC %08x lost SR; entering no-SR mode", ssrc)
+		sbuf.noSR = true
 	}
 
-	status := StatusAccepted
+	if srAvailable {
+		packetNtp, mapperState, err = jb.mapper.RTPToNTPTime(ssrc, packet.RtpTs)
+		pts = packetNtp.UnixNano()
+	}
+
+	if !(mapperState.Degraded || mapperState.Discontinuity) && err != nil {
+		return StatusMapperError, err
+	}
 
 	// if state.Degraded buffer size is increased to max_target_ms
 	// TODO:
 	// 1. late-drop threshold must adjust differently (more forgiving)
 	// 2. Pop must become more conservative
-	if state.Degraded {
+	if mapperState.Degraded {
 		// if mapper degraded, use max target
 		sbuf.target = jb.cfg.MaxTarget
 		status = StatusMapperDegraded
 	} else {
 		sbuf.target = jb.cfg.Target
-	}
-
-	now := time.Now()
-	pts := packetNtp.UnixNano()
-
-	// If there's no SR yet to find the correct PTS,
-	// will take current time and recalculate when SR arrives
-	if err != nil && errors.Is(err, clock.ErrNoSenderReport) {
-		pts = time.Time{}.UnixNano()
-		sbuf.noSR = true
-	} else if sbuf.noSR {
-		jb.recalculatePts(sbuf, ssrc)
-		sbuf.noSR = false
 	}
 
 	dupKey := dupeKey{pts: pts, seq: packet.Seq}
@@ -403,22 +410,38 @@ func (jb *jitterBuffer) Config() *Config {
 }
 
 func (jb *jitterBuffer) recalculatePts(sb *SSRCBuffer, ssrc uint32) {
-	// Thread safety is garanteed by the caller
+	// Thread safety is granted by the caller (caller holds sb.mu)
+	packets := make([]*Packet, 0, sb.heap.Len())
+	for sb.heap.Len() > 0 {
+		packets = append(packets, sb.heap.PopPacket())
+	}
+
+	// Sort packets by RTP timestamp and sequence number to avoid out of order PTS
+	// and triggering mapper's monotonic guard
+	sort.Slice(packets, func(i, j int) bool {
+		if packets[i].RtpTs == packets[j].RtpTs {
+			return packets[i].Seq < packets[j].Seq
+		}
+		return packets[i].RtpTs < packets[j].RtpTs
+	})
+
 	nHeap := &PacketHeap{}
 
-	for sb.heap.Len() > 0 {
-		p := sb.heap.PopPacket()
+	for _, p := range packets {
 		// TODO: this should go through the same dupeKey, drop late, and clock status checks.
 		packetNtp, _, err := jb.mapper.RTPToNTPTime(ssrc, p.RtpTs)
 		if err != nil {
+			jb.logger.Debugf("Recalculate Pts: failed to remap RTP ts %d for SSRC %08x: %v",
+				p.RtpTs, ssrc, err)
 			continue
 		}
-		pts := packetNtp.UnixNano()
-		p.PayloadTs = time.Unix(0, pts)
+
+		p.PayloadTs = packetNtp
 		nHeap.PushPacket(p)
 	}
 
 	sb.heap = nHeap
+	sb.updateOccupancy()
 }
 
 func (sb *SSRCBuffer) updateOccupancy() {

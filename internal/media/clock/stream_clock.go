@@ -48,3 +48,8 @@ func (wt *RTPWrapTracker) ExtendedRTP(ts uint32) (ext uint64) {
 	// extended RTP = rtp_ts + wraps * 2^32
 	return uint64(ts) + uint64(wt.wraps)*(1<<32)
 }
+
+// deltaSeconds calculates the time difference in seconds between the given extended RTP timestamp and the base RTP timestamp
+func (sc *StreamClock) deltaSeconds(extRtp uint64) float64 {
+	return (float64(extRtp) - float64(sc.baseRTP)) / float64(sc.clockRate)
+}

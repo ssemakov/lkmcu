@@ -8,6 +8,7 @@ import (
 	"github.com/ssemakov/lkmcu/internal/logging"
 	"github.com/ssemakov/lkmcu/internal/media/clock"
 	"github.com/ssemakov/lkmcu/internal/metrics"
+	"github.com/ssemakov/lkmcu/internal/testutil"
 )
 
 // Compile-time check: jitterBuffer implements Buffer.
@@ -58,7 +59,7 @@ func newTestBuffer() (Buffer, *clock.ClockMapper) {
 	return buf, m
 }
 
-func TestBuffer_Push_Accepted(t *testing.T) {
+func TestBuffer_Push_Accepted_Before_SR(t *testing.T) {
 	const (
 		ssrc      = uint32(0xdeadbeef)
 		clockRate = uint32(90000)
@@ -79,20 +80,238 @@ func TestBuffer_Push_Accepted(t *testing.T) {
 	}
 }
 
+func TestBuffer_Push_Accepted_After_SR(t *testing.T) {
+	const (
+		ssrc      = uint32(0xdeadbeef)
+		clockRate = uint32(90000)
+	)
+	buf, m := newTestBuffer()
+	m.SetClockRate(ssrc, clockRate)
+
+	baseRTP, hi, lo, baseNTP, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
+
+	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
+		t.Fatal(err)
+	}
+
+	p1RTP := testutil.RTPAfter(clockRate, baseRTP, 50*time.Millisecond)
+	p1 := Packet{Seq: 1, RtpTs: p1RTP}
+
+	status, err := buf.Push(ssrc, p1)
+
+	if err != nil {
+		t.Fatalf("no error expected, got %v", err)
+	}
+
+	// Mapper returns StatusMapperDegraded after single SR and normalizes after the second one
+	if status != StatusMapperDegraded {
+		t.Fatalf("want StatusMapperDegraded, got %v", StatusString(status))
+	}
+
+	baseRTP, hi, lo, _ = testutil.MakeNextSR(baseRTP, baseNTP, clockRate, 1*time.Second)
+	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
+		t.Fatal(err)
+	}
+
+	p2RTP := testutil.RTPAfter(clockRate, baseRTP, 50*time.Millisecond)
+	p2 := Packet{Seq: 2, RtpTs: p2RTP}
+
+	status, err = buf.Push(ssrc, p2)
+
+	if err != nil {
+		t.Fatalf("no error expected, got %v", err)
+	}
+
+	if status != StatusAccepted {
+		t.Fatalf("want StatusAccepted, got %v", StatusString(status))
+	}
+}
+
 func TestBuffer_Push_Duplicate(t *testing.T) {
-	t.Skip("TODO: implement (drop duplicate by {pts, seq})")
+	const (
+		ssrc      = uint32(0xdeadbeef)
+		clockRate = uint32(90000)
+	)
+
+	buf, m := newTestBuffer()
+	m.SetClockRate(ssrc, clockRate)
+
+	baseRTP, hi, lo, _, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
+
+	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
+		t.Fatal(err)
+	}
+
+	p1RTP := testutil.RTPAfter(clockRate, baseRTP, 50*time.Millisecond)
+	p1 := Packet{Seq: 1, RtpTs: p1RTP}
+
+	_, err := buf.Push(ssrc, p1)
+
+	if err != nil {
+		t.Fatalf("no error expected, got %v", err)
+	}
+
+	p2 := Packet{Seq: 1, RtpTs: p1RTP}
+	status, err := buf.Push(ssrc, p2)
+
+	if err != nil {
+		t.Fatalf("no error expected, got %v", err)
+	}
+
+	if status != StatusDuplicate {
+		t.Fatalf("want StatusDuplicate, got %v", StatusString(status))
+	}
 }
 
 func TestBuffer_Push_LateDrop(t *testing.T) {
-	t.Skip("TODO: implement (drop too-late packet)")
+	const (
+		ssrc      = uint32(0xdeadbeef)
+		clockRate = uint32(90000)
+	)
+
+	buf, m := newTestBuffer()
+	m.SetClockRate(ssrc, clockRate)
+
+	baseRTP, hi, lo, _, _ := testutil.MakeSRBase(clockRate, 6*time.Second)
+
+	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
+		t.Fatal(err)
+	}
+
+	p1RTP := testutil.RTPAfter(clockRate, baseRTP, 50*time.Millisecond)
+	p1 := Packet{Seq: 1, RtpTs: p1RTP}
+
+	status, err := buf.Push(ssrc, p1)
+
+	if err != nil {
+		t.Fatalf("no error expected, got %v", err)
+	}
+
+	if status != StatusLateDrop {
+		t.Fatalf("want StatusLateDrop, got %v", StatusString(status))
+	}
+
 }
 
 func TestBuffer_Push_MapperDegraded(t *testing.T) {
-	t.Skip("TODO: implement (mapper degraded widens target and returns status)")
+	const (
+		ssrc      = uint32(0xdeadbeef)
+		clockRate = uint32(90000)
+	)
+	buf, m := newTestBuffer()
+	m.SetClockRate(ssrc, clockRate)
+
+	baseRTP, hi, lo, _, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
+
+	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
+		t.Fatal(err)
+	}
+
+	p1RTP := testutil.RTPAfter(clockRate, baseRTP, 50*time.Millisecond)
+	p1 := Packet{Seq: 1, RtpTs: p1RTP}
+
+	status, err := buf.Push(ssrc, p1)
+
+	if err != nil {
+		t.Fatalf("no error expected, got %v", err)
+	}
+
+	// Mapper returns StatusMapperDegraded after single SR and normalizes after the second one
+	if status != StatusMapperDegraded {
+		t.Fatalf("want StatusMapperDegraded, got %v", StatusString(status))
+	}
+
+	target := buf.Target(ssrc)
+
+	if target != buf.Config().MaxTarget {
+		t.Fatalf("want Target to be MaxTarget %v, got %v", buf.Config().MaxTarget, target)
+	}
 }
 
 func TestBuffer_Push_MapperError(t *testing.T) {
-	t.Skip("TODO: implement (mapper error returns StatusMapperError)")
+	const (
+		ssrc      = uint32(0xdeadbeef)
+		clockRate = uint32(90000)
+	)
+	buf, _ := newTestBuffer()
+
+	baseRTP, _, _, _, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
+
+	p1RTP := testutil.RTPAfter(clockRate, baseRTP, 50*time.Millisecond)
+	p1 := Packet{Seq: 1, RtpTs: p1RTP}
+
+	status, err := buf.Push(ssrc, p1)
+
+	if status != StatusMapperError {
+		t.Fatalf("want StatusMapperError, got %v", StatusString(status))
+	}
+
+	if err == nil {
+		t.Fatalf("want an error, got nil")
+	}
+}
+
+func TestBuffer_Push_PacketsRearrangedAfterSR(t *testing.T) {
+	// t.Skip("TODO: implement (packets rearranged after SR)")
+	const (
+		ssrc      = uint32(0xdeadbeef)
+		clockRate = uint32(90000)
+	)
+	buf, m := newTestBuffer()
+	m.SetClockRate(ssrc, clockRate)
+
+	baseRTP, hi, lo, baseNTP, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
+
+	// Push packets in reverse order
+	// To avoid mapper discontinuity times must be less than 10ms apart per BackstepClampThreshold default config
+	deltas := []time.Duration{20, 15, 10} // in milliseconds
+
+	for i, d := range deltas {
+		pRTP := testutil.RTPAfter(clockRate, baseRTP, d*time.Millisecond)
+		p := Packet{Seq: uint16(i), RtpTs: pRTP}
+		buf.Push(ssrc, p)
+	}
+
+	// Pop should not return any packets before SR
+	pkt, ok := buf.Pop(ssrc, time.Now())
+	if ok {
+		t.Fatalf("expected no packet before SR, got %+v", pkt)
+	}
+
+	baseRTP, hi, lo, _ = testutil.MakeNextSR(baseRTP, baseNTP, clockRate, 10)
+
+	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
+		t.Fatal(err)
+	}
+
+	// push one more packet after SR to trigger recalculation
+	p := Packet{Seq: 99, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 25*time.Millisecond)}
+	buf.Push(ssrc, p)
+
+	// Normalize mapper state out of the discontinuity with second SR
+	baseRTP, hi, lo, _ = testutil.MakeNextSR(baseRTP, baseNTP, clockRate, 50*time.Microsecond)
+	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
+		t.Fatal(err)
+	}
+
+	p = Packet{Seq: 100, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 20*time.Millisecond)}
+	buf.Push(ssrc, p)
+
+	// After SR Pop should return packets in order according to to their calculated PTS NTP
+	for i := len(deltas) - 1; i >= 0; i-- {
+		pkt, ok := buf.Pop(ssrc, time.Now())
+		if !ok {
+			t.Fatalf("expected packet after SR, got none")
+		}
+		expectedSeq := uint16(i)
+		if pkt.Seq != expectedSeq {
+			t.Fatalf("expected packet with Seq %d, got %d", expectedSeq, pkt.Seq)
+		}
+	}
+}
+
+func TestBuffer_Pop_HoldsPacketsUntilSRArrives(t *testing.T) {
+	t.Skip("TODO: implement (pop holds packets until SR Arrives)")
 }
 
 func TestBuffer_Pop_ReadyAndOrder(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/ssemakov/lkmcu/internal/logging"
 	"github.com/ssemakov/lkmcu/internal/metrics"
+	"github.com/ssemakov/lkmcu/internal/testutil"
 )
 
 func newTestMapper(cfg *ClockMapperConfig) *ClockMapper {
@@ -14,17 +15,6 @@ func newTestMapper(cfg *ClockMapperConfig) *ClockMapper {
 		cfg = DefaultClockMapperConfig()
 	}
 	return NewClockMapper(metrics.NewMetrics(), logging.NewNullLogger("test", "debug"), cfg)
-}
-
-func toNTPParts(ntp float64) (uint32, uint32) {
-	sec, frac := math.Modf(ntp)
-	// Convert fractional seconds to 32-bit NTP fractional field with rounding
-	fl := math.Round(frac * (1 << 32)) // 2^32
-	if fl >= (1 << 32) {
-		sec += 1
-		return uint32(sec), 0
-	}
-	return uint32(sec), uint32(fl)
 }
 
 func almostEqual(a, b, eps float64) bool { return math.Abs(a-b) <= eps }
@@ -39,7 +29,7 @@ func TestMapper_RTPWrapExtension(t *testing.T) {
 
 	baseRTP := uint32(0xFFFFFF00)
 	baseNTP := 1000.0
-	hi, lo := toNTPParts(baseNTP)
+	hi, lo := testutil.ToNTPParts(baseNTP)
 	if err := cm.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
 		t.Fatalf("UpdateFromSR(base) err: %v", err)
 	}
