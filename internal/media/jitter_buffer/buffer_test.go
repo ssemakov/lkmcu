@@ -324,7 +324,53 @@ func TestBuffer_Push_PacketsRearrangedAfterSR(t *testing.T) {
 }
 
 func TestBuffer_Pop_HoldsPacketsUntilSRArrives(t *testing.T) {
-	t.Skip("TODO: implement (pop holds packets until SR Arrives)")
+	const (
+		ssrc      = uint32(0xdeadbeef)
+		clockRate = uint32(90000)
+	)
+	buf, m := newTestBuffer()
+	m.SetClockRate(ssrc, clockRate)
+
+	baseRTP, hi, lo, _, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
+
+	// Push packets before any SR
+	p1 := Packet{Seq: 1, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 15*time.Millisecond)}
+	buf.Push(ssrc, p1)
+
+	pkt, ok := buf.Pop(ssrc, time.Now())
+	if ok {
+		t.Fatalf("expected no packet before SR, got %+v", pkt)
+	}
+
+	// Now update SR
+	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
+		t.Fatal(err)
+	}
+
+	// Push another packet after SR to trigger recalculation
+	p2 := Packet{Seq: 2, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 20*time.Millisecond)}
+	buf.Push(ssrc, p2)
+
+	// Advance time beyond max target to allow popping (the window is now widened to 200ms as result of single SR and discontinuity)
+	now := time.Now().Add(120 * time.Millisecond)
+	// Now Pop should return packets
+	pkt, ok = buf.Pop(ssrc, now)
+	if !ok {
+		t.Fatalf("expected packet after SR, got none")
+	}
+
+	if pkt.Seq != 1 {
+		t.Fatalf("expected packet with Seq 1, got %d", pkt.Seq)
+	}
+
+	pkt, ok = buf.Pop(ssrc, now)
+	if !ok {
+		t.Fatalf("expected second packet after SR, got none")
+	}
+
+	if pkt.Seq != 2 {
+		t.Fatalf("expected packet with Seq 2, got %d", pkt.Seq)
+	}
 }
 
 func TestBuffer_Pop_ReadyAndOrder(t *testing.T) {
