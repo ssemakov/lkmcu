@@ -252,7 +252,6 @@ func TestBuffer_Push_MapperError(t *testing.T) {
 }
 
 func TestBuffer_Push_PacketsRearrangedAfterSR(t *testing.T) {
-	// t.Skip("TODO: implement (packets rearranged after SR)")
 	const (
 		ssrc      = uint32(0xdeadbeef)
 		clockRate = uint32(90000)
@@ -260,12 +259,18 @@ func TestBuffer_Push_PacketsRearrangedAfterSR(t *testing.T) {
 	buf, m := newTestBuffer()
 	m.SetClockRate(ssrc, clockRate)
 
+	// Initial SR at t0 = now - 100ms
 	baseRTP, hi, lo, baseNTP, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
 
 	// Push packets in reverse order
 	// To avoid mapper discontinuity times must be less than 10ms apart per BackstepClampThreshold default config
-	deltas := []time.Duration{20, 15, 10} // in milliseconds
+	deltas := []time.Duration{25, 20, 15, 10} // in milliseconds
 
+	// Packets pushed before SR:
+	// d=25ms (Seq 0) -> PTS = t0 + 25ms = now - 75ms
+	// d=20ms (Seq 1) -> PTS = t0 + 20ms = now - 80ms
+	// d=15ms (Seq 2) -> PTS = t0 + 15ms = now - 85ms
+	// d=10ms (Seq 3) -> PTS = t0 + 10ms = now - 90ms
 	for i, d := range deltas {
 		pRTP := testutil.RTPAfter(clockRate, baseRTP, d*time.Millisecond)
 		p := Packet{Seq: uint16(i), RtpTs: pRTP}
@@ -278,28 +283,36 @@ func TestBuffer_Push_PacketsRearrangedAfterSR(t *testing.T) {
 		t.Fatalf("expected no packet before SR, got %+v", pkt)
 	}
 
-	baseRTP, hi, lo, _ = testutil.MakeNextSR(baseRTP, baseNTP, clockRate, 10)
+	// Update mapper with second SR to normalize state
+	// new SR at t1 = t0 + 10µs (~now - 100ms + 10µs). 10µs for test purposes to reset mapper state without shifting time significantly.
+	baseRTP, hi, lo, baseNTP = testutil.MakeNextSR(baseRTP, baseNTP, clockRate, 10*time.Microsecond)
 
 	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
 		t.Fatal(err)
 	}
 
 	// push one more packet after SR to trigger recalculation
-	p := Packet{Seq: 99, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 25*time.Millisecond)}
+	// PTS = t1 + 30ms = now - 70ms
+	p := Packet{Seq: 99, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 30*time.Millisecond)}
 	buf.Push(ssrc, p)
 
 	// Normalize mapper state out of the discontinuity with second SR
-	baseRTP, hi, lo, _ = testutil.MakeNextSR(baseRTP, baseNTP, clockRate, 50*time.Microsecond)
+	/// new SR at t2 = t1 + 50µs (~now - 100ms + 60µs)
+	baseRTP, hi, lo, baseNTP = testutil.MakeNextSR(baseRTP, baseNTP, clockRate, 50*time.Microsecond)
 	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
 		t.Fatal(err)
 	}
 
-	p = Packet{Seq: 100, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 20*time.Millisecond)}
+	// PTS = t2 + 35ms = now - 65ms
+	p = Packet{Seq: 100, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 35*time.Millisecond)}
 	buf.Push(ssrc, p)
+
+	now := time.Now()
 
 	// After SR Pop should return packets in order according to to their calculated PTS NTP
 	for i := len(deltas) - 1; i >= 0; i-- {
-		pkt, ok := buf.Pop(ssrc, time.Now())
+		pkt, ok := buf.Pop(ssrc, now)
+		now = now.Add(5 * time.Millisecond) // advance time to allow popping next packet
 		if !ok {
 			t.Fatalf("expected packet after SR, got none")
 		}
