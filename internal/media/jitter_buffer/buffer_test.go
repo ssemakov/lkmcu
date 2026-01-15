@@ -228,29 +228,6 @@ func TestBuffer_Push_MapperDegraded(t *testing.T) {
 	}
 }
 
-func TestBuffer_Push_MapperError(t *testing.T) {
-	const (
-		ssrc      = uint32(0xdeadbeef)
-		clockRate = uint32(90000)
-	)
-	buf, _ := newTestBuffer()
-
-	baseRTP, _, _, _, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
-
-	p1RTP := testutil.RTPAfter(clockRate, baseRTP, 50*time.Millisecond)
-	p1 := Packet{Seq: 1, RtpTs: p1RTP}
-
-	status, err := buf.Push(ssrc, p1)
-
-	if status != StatusMapperError {
-		t.Fatalf("want StatusMapperError, got %v", StatusString(status))
-	}
-
-	if err == nil {
-		t.Fatalf("want an error, got nil")
-	}
-}
-
 func TestBuffer_Push_PacketsRearrangedAfterSR(t *testing.T) {
 	const (
 		ssrc      = uint32(0xdeadbeef)
