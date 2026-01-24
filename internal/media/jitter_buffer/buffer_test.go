@@ -611,3 +611,43 @@ func TestBuffer_DropsOldest_OverMaxTarget(t *testing.T) {
 		t.Fatalf("expected occupancy <= %v, got %v", cfg.MaxTarget, sbuf.occupy)
 	}
 }
+
+func TestBuffer_Push_MaxReorderDepthCap(t *testing.T) {
+	const ssrc = uint32(0xdeadbeef)
+
+	cfg := DefaultConfig()
+	cfg.MaxReorderDepth = 3
+	cfg.Target = time.Second
+	cfg.MaxTarget = cfg.Target
+
+	buf, _ := newTestBuffer(cfg, nil)
+
+	// Expect 2 packets to be dropped when pushing total of MaxReorderDepth + 2 packets
+	total := cfg.MaxReorderDepth + 2
+	for i := 0; i < total; i++ {
+		if _, err := buf.Push(ssrc, Packet{Seq: uint16(i)}); err != nil {
+			t.Fatalf("Push %d returned error: %v", i, err)
+		}
+	}
+
+	jb := buf.(*jitterBuffer)
+	jb.mu.Lock()
+	sbuf, ok := jb.streams[ssrc]
+	jb.mu.Unlock()
+	if !ok {
+		t.Fatal("expected SSRC buffer to exist")
+	}
+
+	sbuf.mu.Lock()
+	defer sbuf.mu.Unlock()
+
+	if got := sbuf.heap.Len(); got != cfg.MaxReorderDepth {
+		t.Fatalf("expected heap length %d, got %d", cfg.MaxReorderDepth, got)
+	}
+
+	oldest := sbuf.heap.PeekPacket()
+	expectedSeq := uint16(total - cfg.MaxReorderDepth)
+	if oldest == nil || oldest.Seq != expectedSeq {
+		t.Fatalf("expected oldest seq %d after trimming, got %+v", expectedSeq, oldest)
+	}
+}

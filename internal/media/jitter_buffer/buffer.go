@@ -291,6 +291,10 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 		return StatusLateDrop, nil
 	}
 
+	packet.PayloadTs = packetPts
+	sbuf.heap.PushPacket(&packet)
+	sbuf.updateOccupancy()
+
 	// Memory pressure check, drop overflowing the heap packets
 	if jb.cfg.MaxReorderDepth > 0 && sbuf.heap.Len() > jb.cfg.MaxReorderDepth {
 		overflow := sbuf.heap.Len() - jb.cfg.MaxReorderDepth
@@ -303,10 +307,6 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 		jb.logger.Errorf("JitterBuffer: max_reorder_depth=%d exceeded by %d; dropped oldest for SSRC %08x (len %d→%d, target=%v, occupancy=%v)",
 			jb.cfg.MaxReorderDepth, overflow, ssrc, before, sbuf.heap.Len(), sbuf.target, sbuf.occupy)
 	}
-
-	packet.PayloadTs = packetPts
-	sbuf.heap.PushPacket(&packet)
-	sbuf.updateOccupancy()
 
 	// drop oldest packets until occupancy ≤ target_ms
 	for sbuf.occupy > sbuf.target && sbuf.heap.Len() > 0 {
