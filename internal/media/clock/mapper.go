@@ -142,7 +142,6 @@ func (cm *ClockMapper) UpdateFromSR(ssrc uint32, rtpTs, ntpHigh, ntpLow uint32) 
 
 	now := time.Now()
 	sc.lastSRReceivedAt = now
-	// sc.baseSRRecvAt = now
 
 	if !discontinuity {
 		sc.degraded = false

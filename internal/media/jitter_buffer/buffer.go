@@ -181,8 +181,8 @@ func DefaultConfig() *Config {
 }
 
 // NewBuffer creates a Buffer backed by a clock mapper and configuration.
-// If cfg is nil, DefaultConfig is used. If onUnderflow is nil, a no‑op
-// handler is installed. NewBuffer panics if DupeBufferSize < MaxReorderDepth.
+// If cfg is nil, DefaultConfig is used. If onUnderflow is nil, a no‑op handler is installed.
+// NewBuffer panics if DupeBufferSize < MaxReorderDepth.
 func NewBuffer(mapper *clock.ClockMapper, logger logging.Logger, cfg *Config, onUnderflow OnUnderflowHandler) Buffer {
 	if cfg == nil {
 		cfg = DefaultConfig()
@@ -347,10 +347,11 @@ func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (Packet, bool) {
 				if now.After(sbuf.freezeUntil) {
 					sbuf.freezeUntil = now.Add(jb.cfg.RebufferBurst)
 					sbuf.freezeCursor = now.Add(-sbuf.target)
-				}
 
-				// request key frame or whatever else decoder wants to do
-				jb.onUnderflow(ssrc)
+					// request key frame or whatever else decoder wants to do
+					// once per underflow event
+					jb.onUnderflow(ssrc)
+				}
 			}
 		}
 		return Packet{}, false

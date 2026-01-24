@@ -48,13 +48,13 @@ func TestBuffer_NewBuffer_DupeWindowConstraint(t *testing.T) {
 	NewBuffer(&m, logger, &cfg, nil)
 }
 
-func newTestBuffer() (Buffer, *clock.ClockMapper) {
+func newTestBuffer(cfg *Config, onUnderflow OnUnderflowHandler) (Buffer, *clock.ClockMapper) {
 	// logger := logging.NewNullLogger("test", "debug")
 	logger := logging.NewConsoleLogger("test", "debug")
 	mCfg := clock.DefaultClockMapperConfig()
 	m := clock.NewClockMapper(metrics.NewMetrics(), logger, mCfg)
 
-	buf := NewBuffer(m, logger, nil, nil)
+	buf := NewBuffer(m, logger, cfg, onUnderflow)
 
 	return buf, m
 }
@@ -64,7 +64,7 @@ func TestBuffer_Push_Accepted_Before_SR(t *testing.T) {
 		ssrc      = uint32(0xdeadbeef)
 		clockRate = uint32(90000)
 	)
-	buf, m := newTestBuffer()
+	buf, m := newTestBuffer(nil, nil)
 	m.SetClockRate(ssrc, clockRate)
 
 	packet := Packet{Seq: 1, PayloadTs: time.Unix(0, 50)}
@@ -85,7 +85,7 @@ func TestBuffer_Push_Accepted_After_SR(t *testing.T) {
 		ssrc      = uint32(0xdeadbeef)
 		clockRate = uint32(90000)
 	)
-	buf, m := newTestBuffer()
+	buf, m := newTestBuffer(nil, nil)
 	m.SetClockRate(ssrc, clockRate)
 
 	baseRTP, hi, lo, baseNTP, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
@@ -133,10 +133,10 @@ func TestBuffer_Push_Duplicate(t *testing.T) {
 		clockRate = uint32(90000)
 	)
 
-	buf, m := newTestBuffer()
+	buf, m := newTestBuffer(nil, nil)
 	m.SetClockRate(ssrc, clockRate)
 
-	baseRTP, hi, lo, _, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
+	baseRTP, hi, lo, _, _ := testutil.MakeSRBase(clockRate, 10*time.Millisecond)
 
 	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
 		t.Fatal(err)
@@ -169,7 +169,7 @@ func TestBuffer_Push_LateDrop(t *testing.T) {
 		clockRate = uint32(90000)
 	)
 
-	buf, m := newTestBuffer()
+	buf, m := newTestBuffer(nil, nil)
 	m.SetClockRate(ssrc, clockRate)
 
 	baseRTP, hi, lo, _, _ := testutil.MakeSRBase(clockRate, 6*time.Second)
@@ -198,7 +198,7 @@ func TestBuffer_Push_MapperDegraded(t *testing.T) {
 		ssrc      = uint32(0xdeadbeef)
 		clockRate = uint32(90000)
 	)
-	buf, m := newTestBuffer()
+	buf, m := newTestBuffer(nil, nil)
 	m.SetClockRate(ssrc, clockRate)
 
 	baseRTP, hi, lo, _, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
@@ -233,7 +233,7 @@ func TestBuffer_Push_PacketsRearrangedAfterSR(t *testing.T) {
 		ssrc      = uint32(0xdeadbeef)
 		clockRate = uint32(90000)
 	)
-	buf, m := newTestBuffer()
+	buf, m := newTestBuffer(nil, nil)
 	m.SetClockRate(ssrc, clockRate)
 
 	// Initial SR at t0 = now - 100ms
@@ -305,7 +305,7 @@ func TestBuffer_Pop_HoldsPacketsUntilSRArrives(t *testing.T) {
 		ssrc      = uint32(0xdeadbeef)
 		clockRate = uint32(90000)
 	)
-	buf, m := newTestBuffer()
+	buf, m := newTestBuffer(nil, nil)
 	m.SetClockRate(ssrc, clockRate)
 
 	baseRTP, hi, lo, _, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
@@ -350,30 +350,264 @@ func TestBuffer_Pop_HoldsPacketsUntilSRArrives(t *testing.T) {
 	}
 }
 
-func TestBuffer_Pop_ReadyAndOrder(t *testing.T) {
-	t.Skip("TODO: implement (pop when pts <= cursor, stable ordering)")
-}
-
 func TestBuffer_Pop_UnderflowFreezeAndHandler(t *testing.T) {
-	t.Skip("TODO: implement (freeze cursor on underflow; invoke handler)")
+	const (
+		ssrc      = uint32(0xdeadbeef)
+		clockRate = uint32(90000)
+	)
+
+	ch := make(chan uint32, 1)
+	handler := func(ssrc uint32) { ch <- ssrc }
+
+	buf, m := newTestBuffer(nil, handler)
+	m.SetClockRate(ssrc, clockRate)
+
+	baseRTP, hi, lo, baseNTP, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
+
+	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second SR to normalize mapper state
+	baseRTP, hi, lo, _ = testutil.MakeNextSR(baseRTP, baseNTP, clockRate, 10*time.Microsecond)
+	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
+		t.Fatal(err)
+	}
+
+	// Push a packet
+	p1 := Packet{Seq: 1, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 10*time.Millisecond)}
+	buf.Push(ssrc, p1)
+
+	// Should pop normally
+	now := time.Now().Add(20 * time.Millisecond)
+	pkt, ok := buf.Pop(ssrc, now)
+	if !ok {
+		t.Fatalf("expected packet, got none")
+	}
+
+	if pkt.Seq != 1 {
+		t.Fatalf("expected packet with Seq 1, got %d", pkt.Seq)
+	}
+
+	// Move time forward above the underflow guard threshold
+	now = now.Add(buf.Config().UndeflowGuard + 10*time.Millisecond)
+	// Next Pop should underflow
+	pkt, ok = buf.Pop(ssrc, now)
+	if ok {
+		t.Fatalf("expected no packet (underflow), got %+v", pkt)
+	}
+
+	select {
+	case gotSsrc := <-ch:
+		if gotSsrc != ssrc {
+			t.Fatalf("got ssrc %x, want %x", gotSsrc, ssrc)
+		}
+	default:
+		t.Fatal("expected underflow handler to be called, but it was not")
+	}
+
+	// Further Pops within the underflow freeze period should not trigger the handler again
+	pkt, ok = buf.Pop(ssrc, now.Add(10*time.Millisecond))
+	if ok {
+		t.Fatalf("expected no packet (underflow), got %+v", pkt)
+	}
+
+	select {
+	case gotSsrc := <-ch:
+		t.Fatalf("underflow handler called again unexpectedly with ssrc %x", gotSsrc)
+	default:
+		// expected
+	}
 }
 
 func TestBuffer_Occupancy_Report(t *testing.T) {
-	t.Skip("TODO: implement (occupancy reflects newest-oldest span)")
+	const (
+		ssrc      = uint32(0xdeadbeef)
+		clockRate = uint32(90000)
+	)
+
+	buf, m := newTestBuffer(nil, nil)
+	m.SetClockRate(ssrc, clockRate)
+
+	baseRTP, hi, lo, _, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
+
+	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
+		t.Fatal(err)
+	}
+
+	// Push packets
+	numPackets := 5
+	for i := 0; i < numPackets; i++ {
+		p := Packet{Seq: uint16(i), RtpTs: testutil.RTPAfter(clockRate, baseRTP, time.Duration(i)*10*time.Millisecond)}
+		buf.Push(ssrc, p)
+	}
+
+	occ := buf.Occupancy(ssrc)
+	expectedOcc := time.Duration(numPackets-1) * 10 * time.Millisecond
+
+	if absDuration := occ - expectedOcc; absDuration < 0 {
+		absDuration = -absDuration
+		if absDuration > 100*time.Nanosecond {
+			t.Fatalf("expected occupancy %d, got %d", expectedOcc, occ)
+		}
+	} else {
+		if absDuration > 100*time.Nanosecond {
+			t.Fatalf("expected occupancy %d, got %d", expectedOcc, occ)
+		}
+	}
 }
 
 func TestBuffer_Target_NominalAndPerSSRC(t *testing.T) {
-	t.Skip("TODO: implement (nominal target for unknown SSRC; per-SSRC target otherwise)")
+	// t.Skip("TODO: implement (nominal target for unknown SSRC; per-SSRC target otherwise)")
+	const (
+		ssrc      = uint32(0xdeadbeef)
+		clockRate = uint32(90000)
+	)
+
+	buf, m := newTestBuffer(nil, nil)
+	m.SetClockRate(ssrc, clockRate)
+
+	baseRTP, hi, lo, baseNTP, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
+
+	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
+		t.Fatal(err)
+	}
+
+	nom := buf.Target(0xabadcafe) // unknown SSRC
+
+	if nom != buf.Config().Target {
+		t.Fatalf("want nominal Target %v, got %v", buf.Config().Target, nom)
+	}
+
+	p := Packet{Seq: 1, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 10*time.Millisecond)}
+	buf.Push(ssrc, p)
+
+	// After first SR mapper is degraded, so target should be MaxTarget
+	if buf.Target(ssrc) != buf.Config().MaxTarget {
+		t.Fatalf("want per-SSRC Target %v, got %v", buf.Config().MaxTarget, buf.Target(ssrc))
+	}
+
+	// Second SR to normalize mapper state
+	baseRTP, hi, lo, _ = testutil.MakeNextSR(baseRTP, baseNTP, clockRate, 10*time.Microsecond)
+	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
+		t.Fatal(err)
+	}
+
+	p = Packet{Seq: 2, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 20*time.Millisecond)}
+	buf.Push(ssrc, p)
+
+	// After second SR mapper is normalized, so target should be nominal
+	if buf.Target(ssrc) != buf.Config().Target {
+		t.Fatalf("after second SR want per-SSRC Target %v, got %v", buf.Config().Target, buf.Target(ssrc))
+	}
+
 }
 
 func TestSSRCBuffer_UpdateOccupancy(t *testing.T) {
-	t.Skip("TODO: implement (updates occupy based on heap oldest/newest)")
+	base := time.Unix(0, 0)
+	sb := SSRCBuffer{heap: &PacketHeap{}}
+
+	sb.updateOccupancy()
+	if sb.occupy != 0 {
+		t.Fatalf("expected occupancy 0 for empty heap, got %v", sb.occupy)
+	}
+
+	sb.heap.PushPacket(&Packet{PayloadTs: base.Add(10 * time.Millisecond), Seq: 2})
+	sb.updateOccupancy()
+	if sb.occupy != 0 {
+		t.Fatalf("expected occupancy 0 for single packet, got %v", sb.occupy)
+	}
+
+	sb.heap.PushPacket(&Packet{PayloadTs: base.Add(0), Seq: 10})
+	sb.heap.PushPacket(&Packet{PayloadTs: base.Add(20 * time.Millisecond), Seq: 1})
+	sb.updateOccupancy()
+
+	expected := 20 * time.Millisecond
+	if sb.occupy != expected {
+		t.Fatalf("expected occupancy %v, got %v", expected, sb.occupy)
+	}
 }
 
 func TestSSRCBuffer_Cursor_FrozenAndWide(t *testing.T) {
-	t.Skip("TODO: implement (cursor frozen during rebuffer; otherwise now - target)")
+	base := time.Unix(0, 0)
+	sb := SSRCBuffer{
+		target:       50 * time.Millisecond,
+		freezeUntil:  base.Add(100 * time.Millisecond),
+		freezeCursor: base.Add(10 * time.Millisecond),
+	}
+
+	now := base.Add(50 * time.Millisecond)
+	if got := sb.cursor(now); !got.Equal(sb.freezeCursor) {
+		t.Fatalf("expected frozen cursor %v, got %v", sb.freezeCursor, got)
+	}
+
+	now = base.Add(120 * time.Millisecond)
+	expected := now.Add(-sb.target)
+	if got := sb.cursor(now); !got.Equal(expected) {
+		t.Fatalf("expected wide cursor %v, got %v", expected, got)
+	}
 }
 
 func TestBuffer_DropsOldest_OverMaxTarget(t *testing.T) {
-	t.Skip("TODO: implement (cap latency by dropping oldest when occupancy exceeds target)")
+	const (
+		ssrc      = uint32(0xdeadbeef)
+		clockRate = uint32(90000)
+	)
+
+	cfg := DefaultConfig()
+	cfg.LateDrop = 500 * time.Millisecond
+	// set target low to trigger drops quickly
+	cfg.Target = 30 * time.Millisecond
+	buf, m := newTestBuffer(cfg, nil)
+
+	m.SetClockRate(ssrc, clockRate)
+	baseRTP, hi, lo, baseNTP, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
+	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
+		t.Fatal(err)
+	}
+	baseRTP, hi, lo, _ = testutil.MakeNextSR(baseRTP, baseNTP, clockRate, 10*time.Microsecond)
+	if err := m.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
+		t.Fatal(err)
+	}
+
+	numPackets := 5
+	// push 5 packets 10ms apart, total occupancy 40ms > 30ms target
+	for i := 0; i < numPackets; i++ {
+		p := Packet{
+			Seq:   uint16(i),
+			RtpTs: testutil.RTPAfter(clockRate, baseRTP, time.Duration(i)*10*time.Millisecond),
+		}
+		st, err := buf.Push(ssrc, p)
+
+		if err != nil {
+			t.Fatalf("Push error: %v", err)
+		}
+		if st != StatusAccepted {
+			t.Fatalf("expected StatusAccepted, got %v", StatusString(st))
+		}
+	}
+
+	jb := buf.(*jitterBuffer)
+	jb.mu.Lock()
+	sbuf, ok := jb.streams[ssrc]
+	jb.mu.Unlock()
+	if !ok {
+		t.Fatal("expected ssrc buffer to be initialized")
+	}
+
+	sbuf.mu.Lock()
+	defer sbuf.mu.Unlock()
+
+	if sbuf.heap.Len() != numPackets-1 {
+		t.Fatalf("expected heap size %d, got %d", numPackets-1, sbuf.heap.Len())
+	}
+
+	oldest := sbuf.heap.PeekPacket()
+	if oldest == nil || oldest.Seq != 1 {
+		t.Fatalf("expected oldest Seq 1, got %+v", oldest)
+	}
+
+	if sbuf.occupy > cfg.MaxTarget {
+		t.Fatalf("expected occupancy <= %v, got %v", cfg.MaxTarget, sbuf.occupy)
+	}
 }
