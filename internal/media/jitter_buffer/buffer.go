@@ -238,7 +238,7 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 	now := time.Now()
 	pts := now.UnixNano() // default to now if no SR yet
 	srAvailable := jb.mapper.HasSenderReport(ssrc)
-	packetNtp := time.Time{}
+	var packetNtp time.Time
 	status := StatusAccepted
 	mapperState := clock.MapperState{}
 	var err error
@@ -258,7 +258,7 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 		pts = packetNtp.UnixNano()
 	}
 
-	if !(mapperState.Degraded || mapperState.Discontinuity) && err != nil {
+	if !mapperState.Degraded && !mapperState.Discontinuity && err != nil {
 		return StatusMapperError, err
 	}
 
