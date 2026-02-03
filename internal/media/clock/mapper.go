@@ -191,13 +191,14 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 	srAge := time.Since(sc.lastSRReceivedAt)
 
 	state := MapperState{
-		SRAge:       srAge,
-		Degraded:    sc.degraded,
-		BaseNTP:     sc.baseNTP,
-		BaseRTP:     sc.baseRTP,
-		ClockRate:   sc.clockRate,
-		LastNTPOut:  sc.lastNTPOutput,
-		Initialized: true,
+		SRAge:            srAge,
+		Degraded:         sc.degraded,
+		BaseNTP:          sc.baseNTP,
+		BaseRTP:          sc.baseRTP,
+		ClockRate:        sc.clockRate,
+		LastNTPOut:       sc.lastNTPOutput,
+		LastSRReceivedAt: sc.lastSRReceivedAt,
+		Initialized:      true,
 	}
 
 	// SR age check
@@ -354,13 +355,14 @@ func (cm *ClockMapper) ForEach(f func(ssrc uint32, state MapperState) bool) {
 					return time.Since(sc.lastSRReceivedAt)
 				}
 			}(),
-			BaseNTP:       sc.baseNTP,
-			BaseRTP:       sc.baseRTP,
-			ClockRate:     sc.clockRate,
-			LastNTPOut:    sc.lastNTPOutput,
-			Degraded:      sc.degraded,
-			Discontinuity: sc.discontinuity,
-			Initialized:   !sc.lastSRReceivedAt.IsZero(),
+			BaseNTP:          sc.baseNTP,
+			BaseRTP:          sc.baseRTP,
+			ClockRate:        sc.clockRate,
+			LastNTPOut:       sc.lastNTPOutput,
+			Degraded:         sc.degraded,
+			Discontinuity:    sc.discontinuity,
+			LastSRReceivedAt: sc.lastSRReceivedAt,
+			Initialized:      !sc.lastSRReceivedAt.IsZero(),
 		}
 		sc.mu.Unlock()
 		states[ssrc] = state
