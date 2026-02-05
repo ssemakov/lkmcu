@@ -651,3 +651,154 @@ func TestBuffer_Push_MaxReorderDepthCap(t *testing.T) {
 		t.Fatalf("expected oldest seq %d after trimming, got %+v", expectedSeq, oldest)
 	}
 }
+
+func TestBuffer_RecalculatePts_DedupLateAndTrimming(t *testing.T) {
+	const (
+		ssrc      = uint32(0xdeadbeef)
+		clockRate = uint32(90000)
+	)
+
+	type push struct {
+		seq   uint16
+		delta time.Duration
+	}
+
+	pushes := []push{
+		{seq: 1, delta: 10 * time.Millisecond},  // drop-late candidate
+		{seq: 2, delta: 170 * time.Millisecond}, // kept (and dedup target)
+		{seq: 2, delta: 170 * time.Millisecond}, // duplicate of seq 2
+		{seq: 3, delta: 190 * time.Millisecond}, // kept
+		{seq: 4, delta: 240 * time.Millisecond}, // kept, newest
+	}
+
+	setup := func(t *testing.T, cfg *Config) (*jitterBuffer, *SSRCBuffer) {
+		t.Helper()
+
+		buf, mapper := newTestBuffer(cfg, nil)
+		mapper.SetClockRate(ssrc, clockRate)
+
+		baseRTP, hi, lo, _, _ := testutil.MakeSRBase(clockRate, 200*time.Millisecond)
+		for _, p := range pushes {
+			rtp := testutil.RTPAfter(clockRate, baseRTP, p.delta)
+			if _, err := buf.Push(ssrc, Packet{Seq: p.seq, RtpTs: rtp}); err != nil {
+				t.Fatalf("push seq %d: %v", p.seq, err)
+			}
+		}
+
+		if err := mapper.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
+			t.Fatal(err)
+		}
+
+		jb := buf.(*jitterBuffer)
+		jb.mu.Lock()
+		sbuf := jb.streams[ssrc]
+		jb.mu.Unlock()
+		if sbuf == nil {
+			t.Fatal("expected SSRC buffer to exist")
+		}
+
+		return jb, sbuf
+	}
+
+	heapSeqs := func(ph *PacketHeap) []uint16 {
+		seqs := make([]uint16, 0, len(ph.packets))
+		for _, p := range ph.packets {
+			seqs = append(seqs, p.Seq)
+		}
+		return seqs
+	}
+
+	hasSeq := func(seqs []uint16, seq uint16) bool {
+		for _, s := range seqs {
+			if s == seq {
+				return true
+			}
+		}
+		return false
+	}
+
+	countSeq := func(seqs []uint16, seq uint16) int {
+		n := 0
+		for _, s := range seqs {
+			if s == seq {
+				n++
+			}
+		}
+		return n
+	}
+
+	t.Run("dedup_and_late_drop", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Target = 80 * time.Millisecond
+		cfg.MaxTarget = cfg.Target
+		cfg.LateDrop = 20 * time.Millisecond
+		cfg.MaxReorderDepth = 10
+
+		jb, sbuf := setup(t, cfg)
+		sbuf.mu.Lock()
+		defer sbuf.mu.Unlock()
+		sbuf.noSR = false
+		jb.recalculatePts(sbuf, ssrc)
+
+		seqs := heapSeqs(sbuf.heap)
+		if hasSeq(seqs, 1) {
+			t.Fatalf("expected seq 1 to be dropped as late, got heap %v", seqs)
+		}
+		if got := sbuf.heap.Len(); got != 3 {
+			t.Fatalf("after recalc want 3 packets (late drop + dedup), got %d (heap %v)", got, seqs)
+		}
+		if got := countSeq(seqs, 2); got != 1 {
+			t.Fatalf("expected exactly one seq 2 after dedup, got %d (heap %v)", got, seqs)
+		}
+	})
+
+	t.Run("memory_pressure", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Target = 500 * time.Millisecond
+		cfg.MaxTarget = cfg.Target
+		cfg.LateDrop = 5 * time.Second // keep all packets to isolate mem pressure
+		cfg.MaxReorderDepth = 2
+
+		jb, sbuf := setup(t, cfg)
+		sbuf.mu.Lock()
+		defer sbuf.mu.Unlock()
+		sbuf.noSR = false
+		jb.recalculatePts(sbuf, ssrc)
+
+		seqs := heapSeqs(sbuf.heap)
+		if got := sbuf.heap.Len(); got != cfg.MaxReorderDepth {
+			t.Fatalf("expected heap length %d after mem pressure trim, got %d (heap %v)", cfg.MaxReorderDepth, got, seqs)
+		}
+		if hasSeq(seqs, 1) || hasSeq(seqs, 2) {
+			t.Fatalf("expected oldest packets to be trimmed by mem pressure, got heap %v", seqs)
+		}
+	})
+
+	t.Run("drop_oldest", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Target = 10 * time.Millisecond
+		cfg.MaxTarget = cfg.Target
+		cfg.LateDrop = 20 * time.Millisecond
+		cfg.MaxReorderDepth = 10
+
+		jb, sbuf := setup(t, cfg)
+		sbuf.mu.Lock()
+		defer sbuf.mu.Unlock()
+		sbuf.noSR = false
+		jb.recalculatePts(sbuf, ssrc)
+
+		seqs := heapSeqs(sbuf.heap)
+		if got := sbuf.heap.Len(); got != 1 {
+			t.Fatalf("expected dropOldest to leave single packet, got %d (heap %v)", got, seqs)
+		}
+
+		p := sbuf.heap.PeekPacket()
+		if p == nil || p.Seq != 4 {
+			t.Fatalf("expected newest seq 4 to remain after dropOldest, got %+v (heap %v)", p, seqs)
+		}
+
+		if sbuf.occupy > cfg.Target {
+			t.Fatalf("expected occupancy <= %v after dropOldest, got %v", cfg.Target, sbuf.occupy)
+		}
+	})
+}

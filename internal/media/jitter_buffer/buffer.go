@@ -7,6 +7,7 @@
 package jitter_buffer
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -246,8 +247,9 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 	// Recalculate PTS for all buffered packets immediately  upon receiving the first SR
 	if sbuf.noSR && srAvailable {
 		jb.logger.Infof("JitterBuffer: SSRC %08x received first SR; exiting no-SR mode", ssrc)
-		jb.recalculatePts(sbuf, ssrc)
+		// set noSR to false before recalculating PTS to enable proper mapper usage
 		sbuf.noSR = false
+		jb.recalculatePts(sbuf, ssrc)
 	} else if !sbuf.noSR && !srAvailable {
 		jb.logger.Infof("JitterBuffer: SSRC %08x lost SR; entering no-SR mode", ssrc)
 		sbuf.noSR = true
@@ -274,45 +276,29 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 		sbuf.target = jb.cfg.Target
 	}
 
-	dupKey := dupeKey{pts: pts, seq: packet.Seq}
-	if sbuf.recent.Has(dupKey) {
+	if sbuf.dupKey(pts, packet) {
 		return StatusDuplicate, nil
-	} else {
-		sbuf.recent.Push(dupKey)
 	}
 
-	cursor := sbuf.cursor(now)
-	packetPts := time.Unix(0, pts)
+	unixPts := time.Unix(0, pts)
 
 	// Drop late packets
-	if !sbuf.noSR && packetPts.Before(cursor.Add(-jb.cfg.LateDrop)) {
-		jb.logger.Debugf("LateDrop: packetPts=%v before cursor=%v (target=%v) - Config.LateDrop=%v",
-			packetPts, cursor, jb.cfg.Target, jb.cfg.LateDrop)
+	if r, e := sbuf.dropLate(unixPts, now, jb.cfg); !r {
+		jb.logger.Debugf(e.Error())
 		return StatusLateDrop, nil
 	}
 
-	packet.PayloadTs = packetPts
+	packet.PayloadTs = unixPts
 	sbuf.heap.PushPacket(&packet)
 	sbuf.updateOccupancy()
 
 	// Memory pressure check, drop overflowing the heap packets
-	if jb.cfg.MaxReorderDepth > 0 && sbuf.heap.Len() > jb.cfg.MaxReorderDepth {
-		overflow := sbuf.heap.Len() - jb.cfg.MaxReorderDepth
-		before := sbuf.heap.Len()
-		for i := 0; i < overflow; i++ {
-			sbuf.heap.PopPacket()
-		}
-		sbuf.updateOccupancy()
-
-		jb.logger.Errorf("JitterBuffer: max_reorder_depth=%d exceeded by %d; dropped oldest for SSRC %08x (len %d→%d, target=%v, occupancy=%v)",
-			jb.cfg.MaxReorderDepth, overflow, ssrc, before, sbuf.heap.Len(), sbuf.target, sbuf.occupy)
+	if r, e := sbuf.memoryPressure(ssrc, jb.cfg); !r {
+		jb.logger.Errorf(e.Error())
 	}
 
-	// drop oldest packets until occupancy ≤ target_ms
-	for sbuf.occupy > sbuf.target && sbuf.heap.Len() > 0 {
-		sbuf.heap.PopPacket()
-		sbuf.updateOccupancy()
-	}
+	// drop oldest
+	sbuf.dropOldest()
 
 	return status, nil
 }
@@ -410,11 +396,11 @@ func (jb *jitterBuffer) Config() *Config {
 	return jb.cfg
 }
 
-func (jb *jitterBuffer) recalculatePts(sb *SSRCBuffer, ssrc uint32) {
-	// Thread safety is granted by the caller (caller holds sb.mu)
-	packets := make([]*Packet, 0, sb.heap.Len())
-	for sb.heap.Len() > 0 {
-		packets = append(packets, sb.heap.PopPacket())
+func (jb *jitterBuffer) recalculatePts(sbuf *SSRCBuffer, ssrc uint32) {
+	// Thread safety is granted by the caller (caller holds sbuf.mu)
+	packets := make([]*Packet, 0, sbuf.heap.Len())
+	for sbuf.heap.Len() > 0 {
+		packets = append(packets, sbuf.heap.PopPacket())
 	}
 
 	// Sort packets by RTP timestamp and sequence number to avoid out of order PTS
@@ -428,8 +414,10 @@ func (jb *jitterBuffer) recalculatePts(sb *SSRCBuffer, ssrc uint32) {
 
 	nHeap := &PacketHeap{}
 
+	// Clear recent dupeKey buffer as PTS are changing
+	sbuf.recent.Clear()
+
 	for _, p := range packets {
-		// TODO: this should go through the same dupeKey, drop late, and clock status checks.
 		packetNtp, _, err := jb.mapper.RTPToNTPTime(ssrc, p.RtpTs)
 		if err != nil {
 			jb.logger.Debugf("Recalculate Pts: failed to remap RTP ts %d for SSRC %08x: %v",
@@ -437,30 +425,103 @@ func (jb *jitterBuffer) recalculatePts(sb *SSRCBuffer, ssrc uint32) {
 			continue
 		}
 
-		p.PayloadTs = packetNtp
+		if sbuf.dupKey(packetNtp.UnixNano(), *p) {
+			continue
+		}
+
+		unixPts := time.Unix(0, packetNtp.UnixNano())
+		now := time.Now()
+
+		if r, e := sbuf.dropLate(unixPts, now, jb.cfg); !r {
+			jb.logger.Debugf("Recalculate Pts: dropping late packet RTP ts %d for SSRC %08x: %v",
+				p.RtpTs, ssrc, e)
+			continue
+		}
+
+		p.PayloadTs = unixPts
 		nHeap.PushPacket(p)
 	}
 
-	sb.heap = nHeap
-	sb.updateOccupancy()
+	sbuf.heap = nHeap
+	sbuf.updateOccupancy()
+
+	// Memory pressure check, drop overflowing the heap packets
+	if r, e := sbuf.memoryPressure(ssrc, jb.cfg); !r {
+		jb.logger.Errorf(e.Error())
+	}
+
+	// drop oldest
+	sbuf.dropOldest()
 }
 
-func (sb *SSRCBuffer) updateOccupancy() {
-	oldest := sb.heap.PeekPacket()
-	newest := sb.heap.PeekMaxPacket()
+func (sbuf *SSRCBuffer) dupKey(pts int64, packet Packet) bool {
+	// Thread safety is granted by the caller (caller holds sb.mu)
+
+	dupKey := dupeKey{pts: pts, seq: packet.Seq}
+	if sbuf.recent.Has(dupKey) {
+		return true
+	} else {
+		sbuf.recent.Push(dupKey)
+	}
+
+	return false
+}
+
+func (sbuf *SSRCBuffer) dropLate(packetPts time.Time, now time.Time, cfg *Config) (bool, error) {
+	// Thread safety is granted by the caller (caller holds sb.mu)
+
+	cursor := sbuf.cursor(now)
+
+	if !sbuf.noSR && packetPts.Before(cursor.Add(-cfg.LateDrop)) {
+		return false, fmt.Errorf("LateDrop: packetPts=%v before cursor=%v (target=%v) - Config.LateDrop=%v",
+			packetPts, cursor, cfg.Target, cfg.LateDrop)
+	}
+
+	return true, nil
+}
+
+func (sbuf *SSRCBuffer) memoryPressure(ssrc uint32, cfg *Config) (bool, error) {
+	// Thread safety is granted by the caller (caller holds sb.mu)
+
+	if cfg.MaxReorderDepth > 0 && sbuf.heap.Len() > cfg.MaxReorderDepth {
+		overflow := sbuf.heap.Len() - cfg.MaxReorderDepth
+		before := sbuf.heap.Len()
+		for i := 0; i < overflow; i++ {
+			sbuf.heap.PopPacket()
+		}
+		sbuf.updateOccupancy()
+
+		return false, fmt.Errorf("JitterBuffer: max_reorder_depth=%d exceeded by %d; dropped oldest for SSRC %08x (len %d→%d, target=%v, occupancy=%v)",
+			cfg.MaxReorderDepth, overflow, ssrc, before, sbuf.heap.Len(), sbuf.target, sbuf.occupy)
+	}
+
+	return true, nil
+}
+
+// drop oldest packets until occupancy ≤ target_ms
+func (sbuf *SSRCBuffer) dropOldest() {
+	for sbuf.occupy > sbuf.target && sbuf.heap.Len() > 0 {
+		sbuf.heap.PopPacket()
+		sbuf.updateOccupancy()
+	}
+}
+
+func (sbuf *SSRCBuffer) updateOccupancy() {
+	oldest := sbuf.heap.PeekPacket()
+	newest := sbuf.heap.PeekMaxPacket()
 
 	if oldest != nil && newest != nil {
-		sb.occupy = newest.PayloadTs.Sub(oldest.PayloadTs)
+		sbuf.occupy = newest.PayloadTs.Sub(oldest.PayloadTs)
 	} else {
-		sb.occupy = 0
+		sbuf.occupy = 0
 	}
 }
 
-func (sb *SSRCBuffer) cursor(now time.Time) time.Time {
-	if now.Before(sb.freezeUntil) {
+func (sbuf *SSRCBuffer) cursor(now time.Time) time.Time {
+	if now.Before(sbuf.freezeUntil) {
 		// cursor stays frozen at the freeze start moment
-		return sb.freezeCursor
+		return sbuf.freezeCursor
 	}
 
-	return now.Add(-sb.target)
+	return now.Add(-sbuf.target)
 }
