@@ -488,9 +488,12 @@ func (sbuf *SSRCBuffer) memoryPressure(ssrc uint32, cfg *Config) (bool, error) {
 
 // drop oldest packets until occupancy ≤ target_ms
 func (sbuf *SSRCBuffer) dropOldest() {
-	for sbuf.occupy > sbuf.target && sbuf.heap.Len() > 0 {
-		sbuf.heap.PopPacket()
+	for sbuf.heap.Len() > 0 {
 		sbuf.updateOccupancy()
+		if sbuf.occupy <= sbuf.target {
+			return
+		}
+		sbuf.heap.PopPacket()
 	}
 }
 
