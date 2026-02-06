@@ -54,32 +54,6 @@ func StatusString(status Status) string {
 	}
 }
 
-// PacketPayload is the raw payload carried by an RTP packet.
-type PacketPayload []byte
-
-// Packet represents a single RTP packet with both its original RTP
-// metadata and a mapped presentation timestamp on the master clock.
-//
-// Fields:
-//   - RtpTs: RTP timestamp as received on the wire.
-//   - PayloadTs: Presentation timestamp on the master clock (NTP‑like),
-//     filled by the jitter buffer using the clock mapper during Push.
-//   - Seq: RTP sequence number.
-//   - Payload: raw payload bytes.
-type Packet struct {
-	RtpTs     uint32
-	PayloadTs time.Time
-	Seq       uint16
-	Payload   PacketPayload
-}
-
-func (p *Packet) Less(other *Packet) bool {
-	if p.PayloadTs.Equal(other.PayloadTs) {
-		return p.Seq < other.Seq
-	}
-	return p.PayloadTs.Before(other.PayloadTs)
-}
-
 // Buffer provides a concurrency‑safe jitter buffer interface keyed by SSRC.
 //
 // Contract (see docs/jitter_buffer.md):
@@ -141,15 +115,15 @@ type dupeKey struct {
 // This type is exposed for tests and debugging; external users should use
 // the Buffer interface.
 type SSRCBuffer struct {
-	heap         *PacketHeap   // Min heap to Push/Pop packets in presentation order
-	occupy       time.Duration // Current occupancy (newest.PTS - oldest.PTS)
-	lastPopPts   time.Time     // Last popped packet presentation timestamp
-	lastPopAt    time.Time
+	heap         *PacketHeap               // Min heap to Push/Pop packets in presentation order
+	occupy       time.Duration             // Current occupancy (newest.PTS - oldest.PTS)
+	lastPopPts   time.Time                 // Last popped packet presentation timestamp
+	lastPopAt    time.Time                 // When the last pop occurred
 	target       time.Duration             // Effective target buffer duration for this SSRC
 	freezeUntil  time.Time                 // Cursor freeze deadline used during rebuffering
 	freezeCursor time.Time                 // Cursor value while frozen
 	recent       media.RingBuffer[dupeKey] // Sliding window used for duplicate detection
-	noSR         bool
+	noSR         bool                      // true if no Sender Report has been received yet for this SSRC
 
 	mu sync.Mutex
 }
@@ -157,6 +131,8 @@ type SSRCBuffer struct {
 // OnUnderflowHandler is invoked when an SSRC experiences buffer underflow.
 // Typical handlers request a keyframe for video or log diagnostics.
 type OnUnderflowHandler func(ssrc uint32)
+
+// jitterBuffer implements the Buffer interface.
 type jitterBuffer struct {
 	streams     map[uint32]*SSRCBuffer // per-SSRC packet heaps
 	mapper      *clock.ClockMapper
@@ -195,6 +171,11 @@ func NewBuffer(mapper *clock.ClockMapper, logger logging.Logger, cfg *Config, on
 
 	if cfg.DupeBufferSize < cfg.MaxReorderDepth {
 		panic("DupeBufferSize must be >= MaxReorderDepth")
+	}
+
+	if cfg.MaxReorderDepth <= 0 {
+		// TODO: consider disabling memory pressure checks if non-positive
+		panic("JitterBuffer: MaxReorderDepth is non-positive")
 	}
 
 	return &jitterBuffer{
@@ -244,7 +225,7 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 	mapperState := clock.MapperState{}
 	var err error
 
-	// Recalculate PTS for all buffered packets immediately  upon receiving the first SR
+	// Recalculate PTS for all buffered packets immediately upon receiving the first SR
 	if sbuf.noSR && srAvailable {
 		jb.logger.Infof("JitterBuffer: SSRC %08x received first SR; exiting no-SR mode", ssrc)
 		// set noSR to false before recalculating PTS to enable proper mapper usage
@@ -255,11 +236,14 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 		sbuf.noSR = true
 	}
 
+	// Normal operation when SR is available, map RTP→NTP
+	// otherwise use now as PTS to allow buffering
 	if srAvailable {
 		packetNtp, mapperState, err = jb.mapper.RTPToNTPTime(ssrc, packet.RtpTs)
 		pts = packetNtp.UnixNano()
 	}
 
+	// Handle mapper Discontinuity and Degraded states below, otherwise return error
 	if !mapperState.Degraded && !mapperState.Discontinuity && err != nil {
 		return StatusMapperError, err
 	}
@@ -269,7 +253,6 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 	// 1. late-drop threshold must adjust differently (more forgiving)
 	// 2. Pop must become more conservative
 	if mapperState.Degraded {
-		// if mapper degraded, use max target
 		sbuf.target = jb.cfg.MaxTarget
 		status = StatusMapperDegraded
 	} else {
@@ -325,19 +308,22 @@ func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (Packet, bool) {
 	}
 
 	p := sbuf.heap.PeekPacket()
-	if p == nil {
-		if !sbuf.lastPopPts.IsZero() {
-			deadline := sbuf.lastPopAt.Add(jb.cfg.UndeflowGuard)
-			if now.After(deadline) {
-				// underflow, freeze cursor
-				if now.After(sbuf.freezeUntil) {
-					sbuf.freezeUntil = now.Add(jb.cfg.RebufferBurst)
-					sbuf.freezeCursor = now.Add(-sbuf.target)
 
-					// request key frame or whatever else decoder wants to do
-					// once per underflow event
-					jb.onUnderflow(ssrc)
-				}
+	if p == nil && sbuf.lastPopPts.IsZero() {
+		// buffer is empty, and we have never popped any packet yet
+		return Packet{}, false
+	} else if p == nil {
+		// buffer is empty, check for underflow condition
+		deadline := sbuf.lastPopAt.Add(jb.cfg.UndeflowGuard)
+		if now.After(deadline) {
+			// underflow, freeze cursor
+			if now.After(sbuf.freezeUntil) {
+				sbuf.freezeUntil = now.Add(jb.cfg.RebufferBurst)
+				sbuf.freezeCursor = now.Add(-sbuf.target)
+
+				// request key frame or whatever else decoder wants to do
+				// once per underflow event
+				jb.onUnderflow(ssrc)
 			}
 		}
 		return Packet{}, false
@@ -404,6 +390,7 @@ func (jb *jitterBuffer) recalculatePts(sbuf *SSRCBuffer, ssrc uint32) {
 	}
 
 	// Sort packets by RTP timestamp and sequence number to avoid out of order PTS
+	// (This is different from the normal payload order used in the heap by Less() that uses PTS first)
 	// and triggering mapper's monotonic guard
 	sort.Slice(packets, func(i, j int) bool {
 		if packets[i].RtpTs == packets[j].RtpTs {
@@ -483,8 +470,9 @@ func (sbuf *SSRCBuffer) dropLate(packetPts time.Time, now time.Time, cfg *Config
 func (sbuf *SSRCBuffer) memoryPressure(ssrc uint32, cfg *Config) (bool, error) {
 	// Thread safety is granted by the caller (caller holds sb.mu)
 
-	if cfg.MaxReorderDepth > 0 && sbuf.heap.Len() > cfg.MaxReorderDepth {
-		overflow := sbuf.heap.Len() - cfg.MaxReorderDepth
+	overflow := sbuf.heap.Len() - cfg.MaxReorderDepth
+
+	if overflow > 0 {
 		before := sbuf.heap.Len()
 		for i := 0; i < overflow; i++ {
 			sbuf.heap.PopPacket()
