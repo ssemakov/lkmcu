@@ -1,6 +1,8 @@
-package clock
+package media
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestRingBuffer_Values_Empty(t *testing.T) {
 	rb := NewRingBuffer[int](5)
@@ -65,5 +67,45 @@ func TestRingBuffer_Values_FullAndWrap(t *testing.T) {
 		if values[i] != v {
 			t.Errorf("At index %d, expected %d, got %d", i, v, values[i])
 		}
+	}
+}
+
+func TestRingBuffer_Has(t *testing.T) {
+	rb := NewRingBuffer[int](3)
+	rb.Push(10)
+	rb.Push(20)
+	rb.Push(30)
+
+	tests := []struct {
+		val      int
+		expected bool
+	}{
+		{10, true},
+		{20, true},
+		{30, true},
+		{40, false},
+	}
+
+	for _, tt := range tests {
+		if got := rb.Has(tt.val); got != tt.expected {
+			t.Errorf("Has(%d): expected %v, got %v", tt.val, tt.expected, got)
+		}
+	}
+
+	// Test after wrap
+	rb.Push(40) // Now buffer is [20, 30, 40]
+	if rb.Has(10) {
+		t.Errorf("Has(10): expected false after wrap, got true")
+	}
+	if !rb.Has(40) {
+		t.Errorf("Has(40): expected true after wrap, got false")
+	}
+}
+
+func TestRingBuffer_HasZeroValues(t *testing.T) {
+	rb := NewRingBuffer[int](3)
+
+	if rb.Has(0) {
+		t.Errorf("Has(0) on empty buffer: expected false, got true")
 	}
 }
