@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/ssemakov/lkmcu/internal/logging"
-	"github.com/ssemakov/lkmcu/internal/media"
 	"github.com/ssemakov/lkmcu/internal/media/clock"
+	"github.com/ssemakov/lkmcu/internal/media/common"
 )
 
 type Status int
@@ -115,15 +115,15 @@ type dupeKey struct {
 // This type is exposed for tests and debugging; external users should use
 // the Buffer interface.
 type SSRCBuffer struct {
-	heap         *PacketHeap               // Min heap to Push/Pop packets in presentation order
-	occupy       time.Duration             // Current occupancy (newest.PTS - oldest.PTS)
-	lastPopPts   time.Time                 // Last popped packet presentation timestamp
-	lastPopAt    time.Time                 // When the last pop occurred
-	target       time.Duration             // Effective target buffer duration for this SSRC
-	freezeUntil  time.Time                 // Cursor freeze deadline used during rebuffering
-	freezeCursor time.Time                 // Cursor value while frozen
-	recent       media.RingBuffer[dupeKey] // Sliding window used for duplicate detection
-	noSR         bool                      // true if no Sender Report has been received yet for this SSRC
+	heap         *PacketHeap                // Min heap to Push/Pop packets in presentation order
+	occupy       time.Duration              // Current occupancy (newest.PTS - oldest.PTS)
+	lastPopPts   time.Time                  // Last popped packet presentation timestamp
+	lastPopAt    time.Time                  // When the last pop occurred
+	target       time.Duration              // Effective target buffer duration for this SSRC
+	freezeUntil  time.Time                  // Cursor freeze deadline used during rebuffering
+	freezeCursor time.Time                  // Cursor value while frozen
+	recent       common.RingBuffer[dupeKey] // Sliding window used for duplicate detection
+	noSR         bool                       // true if no Sender Report has been received yet for this SSRC
 
 	mu sync.Mutex
 }
@@ -207,7 +207,7 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 	// Initialize per-SSRC packet heap if not present
 	if !ok {
 		sb := SSRCBuffer{heap: &PacketHeap{}, mu: sync.Mutex{}, target: jb.cfg.Target,
-			recent: *media.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize), noSR: true}
+			recent: *common.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize), noSR: true}
 		jb.streams[ssrc] = &sb
 		sbuf = &sb
 	}
