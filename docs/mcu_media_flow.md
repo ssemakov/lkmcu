@@ -12,11 +12,11 @@ This forms the input side of the MCU media pipeline.
 
 ---
 
-## 2. Hand-off to Media Manager
+## 2. Hand-off to Media Pipeline
 
 Each incoming RTP stream is handed off to the `media` package:
 
-- The media manager wraps LiveKit’s RTP receivers and connects them to the clock mapper, drift controller, and jitter buffer.
+- The media pipeline wraps LiveKit’s RTP receivers and connects them to the clock mapper, drift controller, and jitter buffer.
 - Its responsibility is to convert an unaligned, out-of-order, network-timed packet stream into ordered, time-synchronized samples/frames ready for decoding.
 
 At this point, the stream is still compressed (Opus, VP8/H.264).
@@ -92,7 +92,6 @@ The goal: keep all streams within ±40 ms/hour of MCU time.
 Once the jitter buffer outputs time-aligned packets:
 
 1. Audio Path:
-
    - Decode Opus → PCM (48 kHz).
    - Mix multiple active speakers with limiter & gain control.
    - Encode mixed output → single Opus track for publication.
@@ -145,6 +144,8 @@ Operators can adjust:
 
 ```
 LiveKit SDK (RTP)
+   ↓
+ [Media Pipeline]
    ↓
  [Clock Mapper]  ← RTCP SRs
    ↓
