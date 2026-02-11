@@ -1,6 +1,7 @@
 package livekit
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -42,6 +43,88 @@ func TestNewClient(t *testing.T) {
 	if client.dropPolicy != DropOldest {
 		t.Errorf("want dropPolicy=DropOldest, got %d", client.dropPolicy)
 	}
+
+	if client.listSubsFn == nil {
+		t.Fatal("listSubsFn is nil")
+	}
+
+	if client.findSubTargetFn == nil {
+		t.Fatal("findSubTargetFn is nil")
+	}
+}
+
+func TestClient_Subscribe(t *testing.T) {
+	cases := []struct {
+		name      string
+		setup     func(c *Client)
+		pid       string
+		tid       string
+		subscribe bool
+		wantErr   string
+	}{
+		{
+			name:    "room is nil",
+			setup:   func(c *Client) { c.room = nil },
+			pid:     "p1",
+			tid:     "t1",
+			wantErr: "room is not connected",
+		},
+		{
+			name: "SetSubscribed returns error",
+			setup: func(c *Client) {
+				c.room = &lksdk.Room{}
+				c.findSubTargetFn = func(pid, tid string) (setSubscribedFn, error) {
+					return func(sub bool) error { return errors.New("fail") }, nil
+				}
+			},
+			pid:     "p1",
+			tid:     "t1",
+			wantErr: "fail",
+		},
+		{
+			name: "success subscribe true",
+			setup: func(c *Client) {
+				c.room = &lksdk.Room{}
+				c.findSubTargetFn = func(pid, tid string) (setSubscribedFn, error) {
+					return func(sub bool) error { return nil }, nil
+				}
+			},
+			pid:       "p1",
+			tid:       "t1",
+			subscribe: true,
+			wantErr:   "",
+		},
+		{
+			name: "success subscribe false",
+			setup: func(c *Client) {
+				c.room = &lksdk.Room{}
+				c.findSubTargetFn = func(pid, tid string) (setSubscribedFn, error) {
+					return func(sub bool) error { return nil }, nil
+				}
+			},
+			pid:       "p1",
+			tid:       "t1",
+			subscribe: false,
+			wantErr:   "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewClient("ws://x", "k", "s", nil)
+			tc.setup(c)
+			err := c.Subscribe(tc.pid, tc.tid, tc.subscribe)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			} else {
+				if err == nil || err.Error() != tc.wantErr {
+					t.Fatalf("want error %q, got %v", tc.wantErr, err)
+				}
+			}
+		})
+	}
 }
 
 func TestClient_Close_WithoutRoom(t *testing.T) {
@@ -78,7 +161,7 @@ func TestSubscriptionSnapshot_UsesListSubsSeam(t *testing.T) {
 		{TID: "t2", PID: "p2", Kind: "audio", Source: "mic"},
 	}
 	c.room = &lksdk.Room{}
-	c.listSubs = func(_ *lksdk.Room) []*Subscription { return fake }
+	c.listSubsFn = func() []*Subscription { return fake }
 
 	got := c.SubscriptionSnapshot()
 

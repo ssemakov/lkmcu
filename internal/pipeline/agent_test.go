@@ -203,7 +203,7 @@ func TestAgent_reconcileState(t *testing.T) {
 			initialSubs: []*lk.Subscription{},
 			policy:      Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
 			layout:      func() *layout.LayoutView { v, _ := layout.NewLayoutView(""); v.StageTracks["t1"] = "p1"; return v }(),
-			expectedOps: []Operations{&SubscribeOp{TrackID: "t1", Action: VideoFull, Reason: "video on stage"}},
+			expectedOps: []Operations{&SubscribeOp{TrackID: "t1", PID: "p1", Action: VideoFull, Reason: "video on stage"}},
 		},
 		{
 			name: "do nothing for existing subscription",
@@ -240,7 +240,7 @@ func TestAgent_reconcileState(t *testing.T) {
 			initialSubs: []*lk.Subscription{{TID: "t1", PID: "p1"}},
 			policy:      Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
 			layout:      func() *layout.LayoutView { v, _ := layout.NewLayoutView(""); return v }(),
-			expectedOps: []Operations{&UnsubscribeOp{TrackID: "t1", Reason: "not in decisions / participant left"}},
+			expectedOps: []Operations{&UnsubscribeOp{TrackID: "t1", PID: "p1", Reason: "not in decisions / participant left"}},
 		},
 	}
 

@@ -211,18 +211,23 @@ func (a *Agent) reconcileState(ctx context.Context) {
 	// For now we just call full Decide every time
 	// TODO cache decisions on the room snapshot
 	decs := Decide(a.cfg.Policy, lSnap, a.roomSnap)
-	a.cfg.Logger.Infof("Decisions: %v", logging.FormatValue(decs))
+	if len(decs) != 0 {
+		a.cfg.Logger.Infof("New decisions: %v", logging.FormatValue(decs))
+	}
 
 	// Compare with current subscriptions
-	// TODO cache for event reconciliation and get the full sanpshot on periodic reconciliation
+	// TODO cache for event reconciliation and get the full snapshot on periodic reconciliation
 	cur := a.lk.SubscriptionSnapshot()
-	a.cfg.Logger.Infof("Current subscriptions: %v", logging.FormatValue(cur))
+	a.cfg.Logger.Debugf("Current subscriptions: %v", logging.FormatValue(cur))
 
 	ops := Diff(cur, decs)
-	a.cfg.Logger.Infof("Operations: %v", logging.FormatValue(ops))
+	if len(ops) != 0 {
+		a.cfg.Logger.Infof("Operations: %v", logging.FormatValue(ops))
+	}
 
 	for _, op := range ops {
 		a.cfg.Logger.Infof("applying subscription change: %v", logging.FormatValue(op))
-		// TODO apply the change via LiveKit client
+		// TODO handle error
+		op.Exec(a.lk.(*lk.Client))
 	}
 }

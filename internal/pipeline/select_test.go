@@ -68,8 +68,8 @@ func TestDecide(t *testing.T) {
 				},
 			},
 			want: []Decision{
-				{TrackID: "track1", Action: Paused, Reason: "excluded by policy"},
-				{TrackID: "track2", Action: Audio, Reason: "audio on stage"},
+				{TrackID: "track1", PID: "p1", Action: Paused, Reason: "excluded by policy"},
+				{TrackID: "track2", PID: "p1", Action: Audio, Reason: "audio on stage"},
 			},
 		},
 		{
@@ -88,8 +88,8 @@ func TestDecide(t *testing.T) {
 				},
 			},
 			want: []Decision{
-				{TrackID: "track1", Action: VideoFull, Reason: "video on stage"},
-				{TrackID: "track2", Action: Paused, Reason: "excluded by policy"},
+				{TrackID: "track1", PID: "p1", Action: VideoFull, Reason: "video on stage"},
+				{TrackID: "track2", PID: "p1", Action: Paused, Reason: "excluded by policy"},
 			},
 		},
 		{
@@ -107,7 +107,7 @@ func TestDecide(t *testing.T) {
 				},
 			},
 			want: []Decision{
-				{TrackID: "track1", Action: Paused, Reason: "not on stage"},
+				{TrackID: "track1", PID: "p1", Action: Paused, Reason: "not on stage"},
 			},
 		},
 		{
@@ -125,7 +125,7 @@ func TestDecide(t *testing.T) {
 				},
 			},
 			want: []Decision{
-				{TrackID: "track1", Action: VideoFull, Reason: "video on stage"},
+				{TrackID: "track1", PID: "p1", Action: VideoFull, Reason: "video on stage"},
 			},
 		},
 		{
@@ -141,7 +141,7 @@ func TestDecide(t *testing.T) {
 				},
 			},
 			want: []Decision{
-				{TrackID: "t_123", Action: VideoFull, Reason: "video on stage"},
+				{TrackID: "t_123", PID: "p_123", Action: VideoFull, Reason: "video on stage"},
 			},
 		},
 		{
@@ -159,7 +159,7 @@ func TestDecide(t *testing.T) {
 				},
 			},
 			want: []Decision{
-				{TrackID: "track1", Action: Audio, Reason: "audio on stage"},
+				{TrackID: "track1", PID: "p1", Action: Audio, Reason: "audio on stage"},
 			},
 		},
 		{
@@ -183,9 +183,9 @@ func TestDecide(t *testing.T) {
 				},
 			},
 			want: []Decision{
-				{TrackID: "video1", Action: VideoFull, Reason: "video on stage"},
-				{TrackID: "audio1", Action: Audio, Reason: "audio on stage"},
-				{TrackID: "video2", Action: Paused, Reason: "not on stage"},
+				{TrackID: "video1", PID: "p1", Action: VideoFull, Reason: "video on stage"},
+				{TrackID: "audio1", PID: "p1", Action: Audio, Reason: "audio on stage"},
+				{TrackID: "video2", PID: "p2", Action: Paused, Reason: "not on stage"},
 			},
 		},
 	}

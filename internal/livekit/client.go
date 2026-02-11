@@ -8,14 +8,9 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-type Subscription struct {
-	TID    string
-	PID    string
-	Kind   string
-	Source string
-
-	// layer int // video quality layer
-}
+type setSubscribedFn func(subscribe bool) error
+type findSubTargetFn func(pid, trackID string) (setSubscribedFn, error)
+type listSubsFn func() []*Subscription
 
 type Client struct {
 	apiKey    string
@@ -23,11 +18,11 @@ type Client struct {
 	url       string
 	room      *lksdk.Room
 
-	evCh       chan Event
-	dropPolicy DropPolicy
-	listSubs   func(*lksdk.Room) []*Subscription
-	closed     atomic.Bool
-	// mu sync.Mutex
+	evCh            chan Event
+	dropPolicy      DropPolicy
+	listSubsFn      listSubsFn
+	findSubTargetFn findSubTargetFn
+	closed          atomic.Bool
 }
 
 type EventOptions struct {
@@ -47,10 +42,14 @@ func NewClient(url, apiKey, apiSecret string, opts *EventOptions) *Client {
 	if opts == nil {
 		opts = &EventOptions{BufferSize: 64, DropPolicy: DropOldest}
 	}
-	return &Client{url: url, apiKey: apiKey, apiSecret: apiSecret,
+	client := &Client{url: url, apiKey: apiKey, apiSecret: apiSecret,
 		evCh:       make(chan Event, opts.BufferSize),
 		dropPolicy: opts.DropPolicy,
-		listSubs:   defaultListSubs}
+	}
+	client.findSubTargetFn = client.findSubTarget
+	client.listSubsFn = client.defaultListSubsFn
+
+	return client
 }
 
 func (c *Client) JoinRoom(roomName, identity string) error {
@@ -94,6 +93,46 @@ func (c *Client) JoinRoom(roomName, identity string) error {
 	return nil
 }
 
+// Subscribe subscribes or unsubscribes to a track published by a participant.
+// SDK API agnostic, relies on findSubTargetFn to map to the actual subscription function.
+func (c *Client) Subscribe(pid string, trackID string, subscribe bool) error {
+	if c.room == nil {
+		return errors.New("room is not connected")
+	}
+
+	if c.findSubTargetFn == nil {
+		panic("subscription target finder is not set")
+	}
+
+	subscribeFn, err := c.findSubTargetFn(pid, trackID)
+	if err != nil {
+		return err
+	}
+
+	return subscribeFn(subscribe)
+}
+
+// findSubTarget looks up the subscription function for a given participant ID and track ID.
+// Returns an error if the participant or track is not found.
+func (c *Client) findSubTarget(pid, trackID string) (setSubscribedFn, error) {
+	rp := c.room.GetParticipantBySID(pid)
+	if rp == nil {
+		return nil, errors.New("participant not found: " + pid)
+	}
+
+	for _, pub := range rp.TrackPublications() {
+		if pub.SID() == trackID {
+			rpub, ok := pub.(*lksdk.RemoteTrackPublication)
+			if !ok {
+				return nil, errors.New("unexpected publication type for track: " + trackID)
+			}
+			return rpub.SetSubscribed, nil
+		}
+	}
+
+	return nil, errors.New("track not found: " + trackID)
+}
+
 func (c *Client) Close() error {
 	c.closed.Store(true)
 
@@ -105,7 +144,7 @@ func (c *Client) Close() error {
 	return errors.New("room is not connected")
 }
 
-// events pushing with backpresure / dropping policy
+// events pushing with back pressure / dropping policy
 func (c *Client) push(evt Event) {
 	if c.closed.Load() {
 		return
@@ -125,14 +164,15 @@ func (c *Client) push(evt Event) {
 	}
 }
 
-// / LiveKit events normalization and handling
+// LiveKit events normalization and handling
 func (c *Client) Events() <-chan Event {
 	return c.evCh
 }
 
-func defaultListSubs(r *lksdk.Room) []*Subscription {
+func (c *Client) defaultListSubsFn() []*Subscription {
 	subs := make([]*Subscription, 0, 16)
-	for _, p := range r.GetRemoteParticipants() {
+	room := c.room
+	for _, p := range room.GetRemoteParticipants() {
 		for _, pub := range p.TrackPublications() {
 			if pub.IsSubscribed() {
 				subs = append(subs, &Subscription{
@@ -149,7 +189,12 @@ func (c *Client) SubscriptionSnapshot() []*Subscription {
 	if c.room == nil {
 		return nil
 	}
-	return c.listSubs(c.room)
+
+	if c.listSubsFn == nil {
+		panic("listSubsFn is not set")
+	}
+
+	return c.listSubsFn()
 }
 
 // seams for participant and track publication
