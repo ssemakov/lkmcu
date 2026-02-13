@@ -17,6 +17,9 @@ type Pipeline interface {
 	Stop() error
 	// OnRTP is called when a new RTP packet is received for processing.
 	OnRTP(packet Packet) error
+
+	// OnTick is called periodically to process buffered packets and output frames.
+	// OnTick(packet Packet) error
 }
 
 type processor struct {

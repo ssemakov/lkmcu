@@ -54,7 +54,6 @@ type RoomSnapshot struct {
 	Tracks       map[string]*TrackInfo       // Track SID -> info
 	Participants map[string]*ParticipantInfo // Participant SID (matches TrackInfo.ParticipantSID) -> info
 	CurrentSubs  map[string]DecisionAction   // Track SID -> current decision
-	Version      uint64
 }
 
 func NewRoomSnapshot() *RoomSnapshot {
@@ -62,7 +61,6 @@ func NewRoomSnapshot() *RoomSnapshot {
 		Tracks:       make(map[string]*TrackInfo),
 		Participants: make(map[string]*ParticipantInfo),
 		CurrentSubs:  make(map[string]DecisionAction),
-		Version:      0,
 	}
 }
 
@@ -93,7 +91,14 @@ func (rs *RoomSnapshot) Format() string {
 	for pid, p := range rs.Participants {
 		participants = append(participants, fmt.Sprintf("%s:%s", pid, p.Format()))
 	}
-	return fmt.Sprintf("RoomSnapshot{Participants:{%s} CurrentSubs:%+v Version:%d}", strings.Join(participants, " "), rs.CurrentSubs, rs.Version)
+
+	var tracks []string
+	for tid, t := range rs.Tracks {
+		tracks = append(tracks, fmt.Sprintf("%s:%s", tid, t.Format()))
+	}
+
+	return fmt.Sprintf("RoomSnapshot{Participants:{%s} Tracks:{%s} CurrentSubs:%+v}",
+		strings.Join(participants, " "), strings.Join(tracks, " "), rs.CurrentSubs)
 }
 
 func (rs *RoomSnapshot) UpsertParticipant(pid string, identity string) *ParticipantInfo {
@@ -155,4 +160,14 @@ func (rs *RoomSnapshot) DeleteTrack(pid string, tid string) error {
 	delete(rs.Tracks, tid)
 
 	return nil
+}
+
+// Adds or updates the subscription decision for a track in the snapshot.
+func (rs *RoomSnapshot) UpsertSubCache(tid string, action DecisionAction) {
+	rs.CurrentSubs[tid] = action
+}
+
+// RemoveSubCache removes the subscription decision for a track from the snapshot.
+func (rs *RoomSnapshot) RemoveSubCache(tid string) {
+	delete(rs.CurrentSubs, tid)
 }

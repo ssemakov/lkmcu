@@ -56,7 +56,6 @@ func (c *Client) JoinRoom(roomName, identity string) error {
 	roomCB := &lksdk.RoomCallback{
 		OnParticipantConnected:    func(rp *lksdk.RemoteParticipant) { c.onParticipantJoined(rp) },
 		OnParticipantDisconnected: func(rp *lksdk.RemoteParticipant) { c.onParticipantLeft(rp) },
-		OnDisconnected:            func() { c.onRoomDisconnected(lksdk.OtherReason) },
 		OnDisconnectedWithReason:  c.onRoomDisconnected,
 		OnReconnected:             c.onRoomReconnected,
 
@@ -241,6 +240,10 @@ func (c *Client) onTrackUnpublished(pub remoteTrackPublication, p remoteParticip
 }
 
 func (c *Client) onRoomDisconnected(reason lksdk.DisconnectionReason) {
+	if reason == lksdk.RoomClosed {
+		c.push(RoomClosed{})
+		return
+	}
 	c.push(RoomDisconnected{Reason: string(reason)})
 }
 

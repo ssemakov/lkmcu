@@ -101,6 +101,38 @@ func TestAgent_Run_ContextTimeout(t *testing.T) {
 	}
 }
 
+func TestAgent_consumeLiveKitEvents_CancelsOnRoomClosed(t *testing.T) {
+	agent := NewAgent(AgentConfig{
+		Logger: logging.NewNullLogger("test", "info"),
+	}, layout.DefaultLayoutView())
+
+	mockClient := newMockLkClient()
+	agent.lk = mockClient
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		agent.consumeLiveKitEvents(ctx, cancel)
+		close(done)
+	}()
+
+	mockClient.events <- lk.RoomClosed{}
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected consumeLiveKitEvents to cancel context on RoomClosed")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected consumeLiveKitEvents goroutine to exit after RoomClosed")
+	}
+}
+
 // Mock lk.Client for testing
 type mockLkClient struct {
 	events chan lk.Event
@@ -264,4 +296,9 @@ func TestAgent_reconcileState(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAgent_participantOnStageJoinPublishTrack(t *testing.T) {
+	// TODO simulate participant joining and publishing a track that is on stage, and verify the agent decides to subscribe
+	// This will require more extensive mocking of lk.Client and possibly refactoring Agent to allow injecting a mock client for testing
 }

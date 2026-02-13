@@ -55,6 +55,9 @@ func (a *Agent) OnLayoutStageUpdate(s *layout.Stage) {
 
 // Run connects to LiveKit and drives reconciliation until the context is cancelled.
 func (a *Agent) Run(ctx context.Context) error {
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	lg := a.cfg.Logger
 	lg.Infof("agent starting for room=%s identity=%s", a.cfg.Config.Room, a.cfg.Config.Identity)
 	lg.Infof("connecting to LiveKit at %s", a.cfg.Config.LivekitURL)
@@ -78,7 +81,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.tick = time.NewTicker(5 * time.Second)
 	defer a.tick.Stop()
 
-	go a.consumeLiveKitEvents(ctx)
+	go a.consumeLiveKitEvents(runCtx, cancel)
 
 	// TODO initial room state fetch
 	// Get your own participant ID to be able to ignore your own events
@@ -86,30 +89,28 @@ func (a *Agent) Run(ctx context.Context) error {
 	// Main loop
 	for {
 		select {
-		case <-ctx.Done():
+		case <-runCtx.Done():
 			lg.Infof("agent stopping...")
 			time.Sleep(50 * time.Millisecond)
-			return ctx.Err()
+			return runCtx.Err()
 
 		case <-a.tick.C:
-			a.reconcileState(ctx)
+			a.reconcileState(runCtx)
 
 		case ev := <-a.evCh:
 			lg.Infof("event: %v", logging.FormatValue(ev))
 			a.applyEvent(ev)
-			a.reconcileState(ctx)
+			a.reconcileState(runCtx)
 		}
 	}
 }
 
 // consumeLiveKitEvents streams LiveKit events into the agent's event channel until cancellation.
-func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
+func (a *Agent) consumeLiveKitEvents(ctx context.Context, cancel context.CancelFunc) {
 	lg := a.cfg.Logger
-	lg.Debugf("starting LiveKit event consumer")
 	for {
 		select {
 		case <-ctx.Done():
-			lg.Debugf("stopping LiveKit event consumer")
 			return
 		case e, ok := <-a.lk.Events():
 			if !ok {
@@ -117,33 +118,37 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
 				return
 			}
 			switch evt := e.(type) {
-			case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
-				lg.Infof("received LiveKit event: %s", logging.FormatValue(e))
+			case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished, lk.TrackSubscribed, lk.TrackUnsubscribed:
+				lg.Infof("LiveKit event: %s", logging.FormatValue(e))
 				a.evCh <- RoomChangedEvent{LkEvents: []lk.Event{e}}
-				// TODO coalesce multiple ParticipantJoined/Left, TrackPublished/Unpublished events into one RoomChangedEvent
-				// The idea is to pull as many events as possible from the channel without blocking
-				// and then push a single RoomChangedEvent to the event channel.
-				// This way we avoid excessive reconciliations when many participants join/leave or publish/unpublish tracks at once.
-				// Something like this:
-				// for {
-				// 	select {
-				// 	case e2 := <-a.lk.Events():
-				// 		switch e2.(type) {
-				// 		case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
-				// 			lg.Infof("coalescing LiveKit event: %s", logging.FormatValue(e2))
-				// 		default:
-				// 			// push back the event for later processing
-				// 			a.lk.PushBackEvent(e2)
-				// 			break
-				// 		}
-				// 	default:
-				// 		break
-				// 	}
-				// }
-			case lk.TrackSubscribed:
-				lg.Infof("TrackSubscribed: %s track %s kind %s", evt.Identity, evt.TID, evt.Kind)
-				// a.onStageTracks[evt.TID] = true // assume subscribed tracks are on stage
-			// todo ROOM_CLOSED
+			// TODO coalesce multiple ParticipantJoined/Left, TrackPublished/Unpublished events into one RoomChangedEvent
+			// The idea is to pull as many events as possible from the channel without blocking
+			// and then push a single RoomChangedEvent to the event channel.
+			// This way we avoid excessive reconciliations when many participants join/leave or publish/unpublish tracks at once.
+			// Something like this:
+			// for {
+			// 	select {
+			// 	case e2 := <-a.lk.Events():
+			// 		switch e2.(type) {
+			// 		case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
+			// 			lg.Infof("coalescing LiveKit event: %s", logging.FormatValue(e2))
+			// 		default:
+			// 			// push back the event for later processing
+			// 			a.lk.PushBackEvent(e2)
+			// 			break
+			// 		}
+			// 	default:
+			// 		break
+			// 	}
+			// }
+			case lk.RoomDisconnected:
+				lg.Infof("Room disconnected, reason: %v", evt.Reason)
+				cancel()
+				return
+			case lk.RoomClosed:
+				lg.Infof("Room closed, stopping agent")
+				cancel()
+				return
 			default:
 				lg.Debugf("ignoring LiveKit event: %s", logging.FormatValue(evt))
 			}
@@ -155,41 +160,49 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
 
 // applyEvent updates the room snapshot or layout view based on incoming system events.
 func (a *Agent) applyEvent(ev SystemEvent) {
-	a.cfg.Logger.Debugf("applying event: %v", logging.FormatValue(ev))
+	a.cfg.Logger.Debugf("applyEvent %v", logging.FormatValue(ev))
 
-	switch sysE := ev.(type) {
+	switch systemEvt := ev.(type) {
 	case RoomChangedEvent:
 		// Update room snapshot based on the events
-		for _, lkEv := range sysE.LkEvents {
-			switch lkE := lkEv.(type) {
+		for _, evt := range systemEvt.LkEvents {
+			switch lkEvt := evt.(type) {
 			case lk.ParticipantJoined:
-				a.roomSnap.UpsertParticipant(lkE.PID, lkE.Identity)
+				a.roomSnap.UpsertParticipant(lkEvt.PID, lkEvt.Identity)
 			case lk.ParticipantLeft:
-				a.roomSnap.DeleteParticipantAndTracks(lkE.PID)
-				// TODO also unsubscribe from all tracks of this participant w/o waiting for reconciliation
-				// a.roomSnap.RemoveSubsCache(tids)
+
+				tids := a.roomSnap.DeleteParticipantAndTracks(lkEvt.PID)
+				for _, tid := range tids {
+					a.roomSnap.RemoveSubCache(tid)
+				}
 			case lk.TrackPublished:
-				_, err := a.roomSnap.UpsertTrack(lkE.PID, lkE.TID, TrackKind(lkE.Kind))
+				_, err := a.roomSnap.UpsertTrack(lkEvt.PID, lkEvt.TID, TrackKind(lkEvt.Kind))
 				if err != nil {
-					a.cfg.Logger.Errorf("TrackPublished error: %v", err)
+					a.cfg.Logger.Errorf("lk.TrackPublished error: %v", err)
 					continue
 				}
 			case lk.TrackUnpublished:
-				err := a.roomSnap.DeleteTrack(lkE.PID, lkE.TID)
-				// a.roomSnap.RemoveSubsCache(lkE.TID)
+				err := a.roomSnap.DeleteTrack(lkEvt.PID, lkEvt.TID)
 				if err != nil {
-					a.cfg.Logger.Errorf("TrackUnpublished error: %v", err)
+					a.cfg.Logger.Errorf("lk.TrackUnpublished error: %v", err)
 					continue
 				}
+				a.roomSnap.RemoveSubCache(lkEvt.TID)
+			case lk.TrackSubscribed:
+				// TODO properly convert to video-full, video-low, pause
+				a.roomSnap.UpsertSubCache(lkEvt.TID, DecisionAction(lkEvt.Kind))
+			case lk.TrackUnsubscribed:
+				a.roomSnap.DeleteTrack(lkEvt.PID, lkEvt.TID)
+				a.roomSnap.RemoveSubCache(lkEvt.TID)
 			default:
-				a.cfg.Logger.Debugf("ignoring LiveKit event in RoomChangedEvent: %s", logging.FormatValue(lkE))
+				a.cfg.Logger.Debugf("ignoring LiveKit event in RoomChangedEvent: %s", logging.FormatValue(lkEvt))
 			}
 		}
 	case LayoutChangedEvent:
 		// TODO consider coasting multiple LayoutChangedEvent into one
-		if sysE.Stage != nil {
+		if systemEvt.Stage != nil {
 			// Update layout view atomically
-			a.layoutView.UpdateFromStage(sysE.Stage)
+			a.layoutView.UpdateFromStage(systemEvt.Stage)
 		}
 		a.cfg.Logger.Debugf("updated stage layout: %v", logging.FormatValue(a.layoutView.CurrentStage))
 	default:
@@ -209,25 +222,27 @@ func (a *Agent) reconcileState(ctx context.Context) {
 	// This can be done after profiler says that Decide is a bottleneck
 	// or we can keep track of dirty PIDs/TIDs in the room snapshot and pass them to Decide
 	// For now we just call full Decide every time
-	// TODO cache decisions on the room snapshot
+	// TODO cache decisions in the room snapshot
 	decs := Decide(a.cfg.Policy, lSnap, a.roomSnap)
 	if len(decs) != 0 {
-		a.cfg.Logger.Infof("New decisions: %v", logging.FormatValue(decs))
+		a.cfg.Logger.Debugf("Decisions: %v", logging.FormatValue(decs))
 	}
 
 	// Compare with current subscriptions
 	// TODO cache for event reconciliation and get the full snapshot on periodic reconciliation
-	cur := a.lk.SubscriptionSnapshot()
-	a.cfg.Logger.Debugf("Current subscriptions: %v", logging.FormatValue(cur))
+	curLk := a.lk.SubscriptionSnapshot()
+	a.cfg.Logger.Debugf("Current LK subscriptions: %v", logging.FormatValue(curLk))
 
-	ops := Diff(cur, decs)
+	ops := Diff(curLk, decs)
 	if len(ops) != 0 {
-		a.cfg.Logger.Infof("Operations: %v", logging.FormatValue(ops))
+		a.cfg.Logger.Infof("Operations to apply: %v", logging.FormatValue(ops))
 	}
 
 	for _, op := range ops {
-		a.cfg.Logger.Infof("applying subscription change: %v", logging.FormatValue(op))
-		// TODO handle error
-		op.Exec(a.lk.(*lk.Client))
+		a.cfg.Logger.Infof("Applying subscription change: %v", logging.FormatValue(op))
+
+		if err := op.Exec(a.lk.(*lk.Client)); err != nil {
+			a.cfg.Logger.Errorf("error applying subscription change: %v", err)
+		}
 	}
 }

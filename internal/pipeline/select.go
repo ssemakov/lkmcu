@@ -96,7 +96,7 @@ func (o *UpdateOp) Exec(lk *livekit.Client) error {
 //   - A slice of Decision values, one per considered track, where Decision.TrackID equals
 //     the map key (trackKey) used in snapshot.Tracks.
 func Decide(policy Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []Decision {
-	desc := []Decision{}
+	decs := []Decision{}
 
 	for tid, tInfo := range snapshot.Tracks {
 		// track presence
@@ -116,7 +116,7 @@ func Decide(policy Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []
 		excluded := policy.IsExcluded(tInfo.Kind)
 
 		if !included || excluded {
-			desc = append(desc, Decision{TrackID: tid, PID: pid, Action: Paused, Reason: "excluded by policy"})
+			decs = append(decs, Decision{TrackID: tid, PID: pid, Action: Paused, Reason: "excluded by policy"})
 			continue
 		}
 
@@ -136,22 +136,38 @@ func Decide(policy Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []
 		}
 
 		if !onStage {
-			desc = append(desc, Decision{TrackID: tid, PID: pid, Action: Paused, Reason: "not on stage"})
+			decs = append(decs, Decision{TrackID: tid, PID: pid, Action: Paused, Reason: "not on stage"})
 			continue
 		}
 
 		switch tInfo.Kind {
 		case TrackVideo, TrackScreenShare:
-			desc = append(desc, Decision{TrackID: tid, PID: pid, Action: VideoFull, Reason: "video on stage"})
+			decs = append(decs, Decision{TrackID: tid, PID: pid, Action: VideoFull, Reason: "video on stage"})
 		case TrackAudio:
-			desc = append(desc, Decision{TrackID: tid, PID: pid, Action: Audio, Reason: "audio on stage"})
+			decs = append(decs, Decision{TrackID: tid, PID: pid, Action: Audio, Reason: "audio on stage"})
 		default:
-			desc = append(desc, Decision{TrackID: tid, PID: pid, Action: Paused, Reason: "unknown track kind"})
+			decs = append(decs, Decision{TrackID: tid, PID: pid, Action: Paused, Reason: "unknown track kind"})
 		}
 	}
 
-	return desc
+	return decs
 }
+
+// func filterCurrentSubs(decisionCandidates []Decision, snapshot *RoomSnapshot) []Decision {
+// 	decs := make([]Decision, 0, len(decisionCandidates))
+
+// 	for _, candidate := range decisionCandidates {
+// 		tid := candidate.TrackID
+// 		desc := candidate.Action
+// 		if _, ok := snapshot.CurrentSubs[tid]; ok && snapshot.CurrentSubs[tid] == desc {
+// 			continue
+// 		}
+
+// 		decs = append(decs, candidate)
+// 	}
+
+// 	return decs
+// }
 
 // Diff converts desired decisions into subscription operations compared to current subscriptions.
 // - cur: current LiveKit subscriptions (TID = trackKey/SID as used by Decide outputs)
