@@ -298,7 +298,69 @@ func TestAgent_reconcileState(t *testing.T) {
 	}
 }
 
-func TestAgent_participantOnStageJoinPublishTrack(t *testing.T) {
-	// TODO simulate participant joining and publishing a track that is on stage, and verify the agent decides to subscribe
-	// This will require more extensive mocking of lk.Client and possibly refactoring Agent to allow injecting a mock client for testing
+func TestAgent_participantOnStageJoinPublishTrackLeaves(t *testing.T) {
+	agent := NewAgent(AgentConfig{
+		Logger: logging.NewNullLogger("test", "info"),
+		Config: config.Config{
+			IncludeKind: "video,audio",
+		},
+	}, layout.DefaultLayoutView())
+
+	agent.applyEvent(LayoutChangedEvent{
+		Stage: &layout.Stage{
+			Slots: []layout.Slot{
+				{Identity: "alice", TrackKind: "video"},
+			},
+		},
+	})
+
+	agent.applyEvent(RoomChangedEvent{
+		LkEvents: []lk.Event{
+			lk.ParticipantJoined{PID: "p1", Identity: "alice"},
+			lk.TrackPublished{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
+		},
+	})
+
+	decs := Decide(agent.cfg.Policy, agent.layoutView.Snapshot(), agent.roomSnap)
+	ops := Diff(nil, decs)
+
+	want := []Operations{
+		&SubscribeOp{TrackID: "t1", PID: "p1", Action: VideoFull, Reason: "video on stage"},
+	}
+	if diff := cmp.Diff(want, ops); diff != "" {
+		t.Fatalf("unexpected operations (-want +got):\n%s", diff)
+	}
+
+	agent.applyEvent(RoomChangedEvent{
+		LkEvents: []lk.Event{
+			lk.TrackSubscribed{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
+			lk.TrackUnsubscribed{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
+			lk.ParticipantLeft{PID: "p1", Identity: "alice"},
+		},
+	})
+
+	if _, ok := agent.roomSnap.Participants["p1"]; ok {
+		t.Fatalf("participant should be removed from snapshot")
+	}
+
+	if _, ok := agent.roomSnap.Tracks["t1"]; ok {
+		t.Fatalf("track should be removed after TrackUnsubscribed")
+	}
+
+	if len(agent.roomSnap.Participants) != 0 {
+		t.Fatalf("expected no participants after ParticipantLeft, got %#v", agent.roomSnap.Participants)
+	}
+
+	if len(agent.roomSnap.Tracks) != 0 {
+		t.Fatalf("expected no tracks after ParticipantLeft, got %#v", agent.roomSnap.Tracks)
+	}
+
+	if _, ok := agent.roomSnap.CurrentSubs["t1"]; ok {
+		t.Fatalf("current subscription cache should be cleared for unsubscribed track")
+	}
+
+	decs = Decide(agent.cfg.Policy, agent.layoutView.Snapshot(), agent.roomSnap)
+	if len(decs) != 0 {
+		t.Fatalf("expected no decisions after track unsubscribe, got %#v", decs)
+	}
 }
