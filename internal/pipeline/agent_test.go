@@ -139,6 +139,17 @@ type mockLkClient struct {
 	subs   []*lk.Subscription
 }
 
+type fakeRemoteTrack struct {
+	id   string
+	kind string
+	ssrc uint32
+}
+
+func (f fakeRemoteTrack) ID() string               { return f.id }
+func (f fakeRemoteTrack) Kind() string             { return f.kind }
+func (f fakeRemoteTrack) ReadRTP() ([]byte, error) { return nil, nil }
+func (f fakeRemoteTrack) SSRC() uint32             { return f.ssrc }
+
 func newMockLkClient() *mockLkClient {
 	return &mockLkClient{
 		events: make(chan lk.Event, 10),
@@ -152,41 +163,140 @@ func (m *mockLkClient) Events() <-chan lk.Event                  { return m.even
 func (m *mockLkClient) SubscriptionSnapshot() []*lk.Subscription { return m.subs }
 
 func TestAgent_applyEvent(t *testing.T) {
-	agent := NewAgent(AgentConfig{
-		Logger: logging.NewNullLogger("test", "info"),
-	}, layout.DefaultLayoutView())
+	type testCase struct {
+		name   string
+		setup  func(a *Agent)
+		event  lk.Event
+		assert func(t *testing.T, a *Agent)
+	}
 
-	event := RoomChangedEvent{
-		LkEvents: []lk.Event{
-			lk.ParticipantJoined{PID: "participant-1", Identity: "p1"},
-			lk.TrackPublished{PID: "participant-1", TID: "track-1", Kind: "video"},
+	cases := []testCase{
+		{
+			name:  "participant joined",
+			event: lk.ParticipantJoined{PID: "p1", Identity: "alice"},
+			assert: func(t *testing.T, a *Agent) {
+				t.Helper()
+				p, ok := a.roomSnap.Participants["p1"]
+				if !ok {
+					t.Fatal("participant not found after ParticipantJoined")
+				}
+				if p.Identity != "alice" {
+					t.Fatalf("expected identity alice, got %s", p.Identity)
+				}
+			},
+		},
+		{
+			name: "participant left",
+			setup: func(a *Agent) {
+				a.roomSnap.UpsertParticipant("p1", "alice")
+				_, _ = a.roomSnap.UpsertTrack("p1", "t1", TrackVideo)
+				a.roomSnap.UpsertSubCache("t1", VideoFull)
+			},
+			event: lk.ParticipantLeft{PID: "p1", Identity: "alice"},
+			assert: func(t *testing.T, a *Agent) {
+				t.Helper()
+				if _, ok := a.roomSnap.Participants["p1"]; ok {
+					t.Fatal("participant should be removed after ParticipantLeft")
+				}
+				if _, ok := a.roomSnap.Tracks["t1"]; ok {
+					t.Fatal("track should be removed after ParticipantLeft")
+				}
+				if _, ok := a.roomSnap.CurrentSubs["t1"]; ok {
+					t.Fatal("subscription cache should be removed after ParticipantLeft")
+				}
+			},
+		},
+		{
+			name: "track published",
+			setup: func(a *Agent) {
+				a.roomSnap.UpsertParticipant("p1", "alice")
+			},
+			event: lk.TrackPublished{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
+			assert: func(t *testing.T, a *Agent) {
+				t.Helper()
+				p := a.roomSnap.Participants["p1"]
+				if p == nil {
+					t.Fatal("participant not found after TrackPublished")
+				}
+				if _, ok := p.PublishedTracks["t1"]; !ok {
+					t.Fatal("track not found in participant after TrackPublished")
+				}
+				if _, ok := a.roomSnap.Tracks["t1"]; !ok {
+					t.Fatal("track not found in room snapshot after TrackPublished")
+				}
+			},
+		},
+		{
+			name: "track unpublished",
+			setup: func(a *Agent) {
+				a.roomSnap.UpsertParticipant("p1", "alice")
+				_, _ = a.roomSnap.UpsertTrack("p1", "t1", TrackVideo)
+				a.roomSnap.UpsertSubCache("t1", VideoFull)
+			},
+			event: lk.TrackUnpublished{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
+			assert: func(t *testing.T, a *Agent) {
+				t.Helper()
+				if _, ok := a.roomSnap.Tracks["t1"]; ok {
+					t.Fatal("track should be removed after TrackUnpublished")
+				}
+				if _, ok := a.roomSnap.CurrentSubs["t1"]; ok {
+					t.Fatal("subscription cache should be removed after TrackUnpublished")
+				}
+			},
+		},
+		{
+			name: "track subscribed",
+			setup: func(a *Agent) {
+				a.roomSnap.UpsertParticipant("p1", "alice")
+				_, _ = a.roomSnap.UpsertTrack("p1", "t1", TrackVideo)
+			},
+			event: lk.TrackSubscribed{
+				PID:         "p1",
+				Identity:    "alice",
+				TID:         "t1",
+				Kind:        "video",
+				RemoteTrack: fakeRemoteTrack{id: "t1", kind: "video", ssrc: 1234},
+			},
+			assert: func(t *testing.T, a *Agent) {
+				t.Helper()
+				if got, ok := a.roomSnap.CurrentSubs["t1"]; !ok || got != DecisionAction("video") {
+					t.Fatalf("expected current subscription for t1 to be video, got %q (present=%v)", got, ok)
+				}
+			},
+		},
+		{
+			name: "track unsubscribed",
+			setup: func(a *Agent) {
+				a.roomSnap.UpsertParticipant("p1", "alice")
+				_, _ = a.roomSnap.UpsertTrack("p1", "t1", TrackVideo)
+				a.roomSnap.UpsertSubCache("t1", VideoFull)
+			},
+			event: lk.TrackUnsubscribed{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
+			assert: func(t *testing.T, a *Agent) {
+				t.Helper()
+				if _, ok := a.roomSnap.Tracks["t1"]; ok {
+					t.Fatal("track should be removed after TrackUnsubscribed")
+				}
+				if _, ok := a.roomSnap.CurrentSubs["t1"]; ok {
+					t.Fatal("subscription cache should be removed after TrackUnsubscribed")
+				}
+			},
 		},
 	}
 
-	agent.applyEvent(event)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := NewAgent(AgentConfig{
+				Logger: logging.NewNullLogger("test", "info"),
+			}, layout.DefaultLayoutView())
 
-	if _, ok := agent.roomSnap.Participants["participant-1"]; !ok {
-		t.Fatal("participant not found in room snapshot after applyEvent")
-	}
+			if tc.setup != nil {
+				tc.setup(agent)
+			}
 
-	p := agent.roomSnap.Participants["participant-1"]
-	if _, ok := p.PublishedTracks["track-1"]; !ok {
-		t.Fatal("track not found for participant after applyEvent")
-	}
-
-	event = RoomChangedEvent{
-		LkEvents: []lk.Event{
-			lk.ParticipantLeft{PID: "participant-1"},
-		},
-	}
-
-	agent.applyEvent(event)
-
-	if _, ok := agent.roomSnap.Participants["participant-1"]; ok {
-		t.Fatal("participant should be deleted after ParticipantLeft event")
-	}
-	if _, ok := agent.roomSnap.Tracks["track-1"]; ok {
-		t.Fatal("track should be deleted after ParticipantLeft event")
+			agent.applyEvent(RoomChangedEvent{LkEvents: []lk.Event{tc.event}})
+			tc.assert(t, agent)
+		})
 	}
 }
 
@@ -333,7 +443,13 @@ func TestAgent_participantOnStageJoinPublishTrackLeaves(t *testing.T) {
 
 	agent.applyEvent(RoomChangedEvent{
 		LkEvents: []lk.Event{
-			lk.TrackSubscribed{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
+			lk.TrackSubscribed{
+				PID:         "p1",
+				Identity:    "alice",
+				TID:         "t1",
+				Kind:        "video",
+				RemoteTrack: fakeRemoteTrack{id: "t1", kind: "video", ssrc: 1234},
+			},
 			lk.TrackUnsubscribed{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
 			lk.ParticipantLeft{PID: "p1", Identity: "alice"},
 		},

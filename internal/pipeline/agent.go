@@ -8,6 +8,7 @@ import (
 	"github.com/ssemakov/lkmcu/internal/layout"
 	lk "github.com/ssemakov/lkmcu/internal/livekit"
 	"github.com/ssemakov/lkmcu/internal/logging"
+	"github.com/ssemakov/lkmcu/internal/media/processor"
 )
 
 // AgentConfig collects dependencies and settings needed to start an Agent.
@@ -32,6 +33,8 @@ type Agent struct {
 	layoutView *layout.LayoutView // current layout view
 	roomSnap   *RoomSnapshot      // current room state
 
+	trackPipelineManager processor.TrackPipelineManager
+
 	evCh chan SystemEvent // internal events
 	tick *time.Ticker     // periodic safety reconciliation
 }
@@ -41,10 +44,11 @@ func NewAgent(cfg AgentConfig, l *layout.LayoutView) *Agent {
 	cfg.Policy = NewPolicy(cfg.Config.IncludeKind, cfg.Config.ExcludeKind)
 
 	return &Agent{
-		cfg:        cfg,
-		roomSnap:   NewRoomSnapshot(), // room snapshot is single-threaded, no locks
-		layoutView: l,
-		evCh:       make(chan SystemEvent, 64),
+		cfg:                  cfg,
+		layoutView:           l,
+		roomSnap:             NewRoomSnapshot(), // room snapshot is single-threaded, no locks
+		trackPipelineManager: processor.NewTrackPipelineManager(cfg.Logger),
+		evCh:                 make(chan SystemEvent, 64),
 	}
 }
 
@@ -191,8 +195,17 @@ func (a *Agent) applyEvent(ev SystemEvent) {
 			case lk.TrackSubscribed:
 				// TODO properly convert to video-full, video-low, pause
 				a.roomSnap.UpsertSubCache(lkEvt.TID, DecisionAction(lkEvt.Kind))
+				_, err := a.trackPipelineManager.NewTrackPipeline(lkEvt.RemoteTrack)
+				if err != nil {
+					a.cfg.Logger.Errorf("error creating track pipeline: %v", err)
+				}
 			case lk.TrackUnsubscribed:
-				a.roomSnap.DeleteTrack(lkEvt.PID, lkEvt.TID)
+				pipeErr := a.trackPipelineManager.RemoveTrackPipeline(lkEvt.TID)
+				deleteErr := a.roomSnap.DeleteTrack(lkEvt.PID, lkEvt.TID)
+				if deleteErr != nil || pipeErr != nil {
+					a.cfg.Logger.Errorf("lk.TrackUnsubscribed errors: [%v, %v]", deleteErr, pipeErr)
+					continue
+				}
 				a.roomSnap.RemoveSubCache(lkEvt.TID)
 			default:
 				a.cfg.Logger.Debugf("ignoring LiveKit event in RoomChangedEvent: %s", logging.FormatValue(lkEvt))

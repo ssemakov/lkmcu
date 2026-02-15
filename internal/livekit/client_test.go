@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	lksdk "github.com/livekit/server-sdk-go/v2"
-	"github.com/pion/webrtc/v4"
 )
 
 func TestNewClient(t *testing.T) {
@@ -190,10 +189,16 @@ type fakePub struct {
 func (f fakePub) SID() string           { return f.sid }
 func (f fakePub) Kind() lksdk.TrackKind { return f.kind }
 
-type fakeWebRTCTrack struct{ Id string }
+type fakeRemoteTrack struct {
+	IdVal   string
+	KindVal string
+	SsrcVal uint32
+}
 
-func (f fakeWebRTCTrack) ID() string                { return f.Id }
-func (f fakeWebRTCTrack) Kind() webrtc.RTPCodecType { return webrtc.RTPCodecTypeVideo }
+func (f fakeRemoteTrack) ID() string               { return f.IdVal }
+func (f fakeRemoteTrack) Kind() string             { return f.KindVal }
+func (f fakeRemoteTrack) ReadRTP() ([]byte, error) { return nil, nil }
+func (f fakeRemoteTrack) SSRC() uint32             { return f.SsrcVal }
 
 func newClient() *Client {
 	return NewClient("ws://localhost:7880", "key", "secret", nil)
@@ -211,7 +216,7 @@ func recvOne(t *testing.T, ch <-chan Event) any {
 }
 
 func TestClient_EventHandling(t *testing.T) {
-	track := fakeWebRTCTrack{Id: "track1"}
+	track := fakeRemoteTrack{IdVal: "track1", KindVal: "video", SsrcVal: 1234}
 	pub := fakePub{sid: "track1", kind: lksdk.TrackKindVideo}
 	rp := fakeRP{sid: "participant1", identity: "user1"}
 
@@ -245,12 +250,12 @@ func TestClient_EventHandling(t *testing.T) {
 		{
 			name:   "track subscribed",
 			invoke: func(c *Client) { c.onTrackSubscribed(track, pub, rp) },
-			want:   TrackSubscribed{PID: rp.sid, Identity: rp.identity, TID: pub.sid, Kind: pub.kind.String(), Track: track},
+			want:   TrackSubscribed{PID: rp.sid, Identity: rp.identity, TID: pub.sid, Kind: pub.kind.String(), RemoteTrack: track},
 		},
 		{
 			name:   "track unsubscribed",
 			invoke: func(c *Client) { c.onTrackUnsubscribed(track, pub, rp) },
-			want:   TrackUnsubscribed{PID: rp.sid, Identity: rp.identity, TID: pub.sid, Kind: pub.kind.String(), Track: track},
+			want:   TrackUnsubscribed{PID: rp.sid, Identity: rp.identity, TID: pub.sid, Kind: pub.kind.String(), RemoteTrack: track},
 		},
 		{
 			name:   "room reconnected",

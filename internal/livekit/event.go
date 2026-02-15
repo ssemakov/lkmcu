@@ -10,11 +10,11 @@ type (
 	TrackUnpublished  struct{ PID, Identity, TID, Kind string }
 	TrackSubscribed   struct {
 		PID, Identity, TID, Kind string
-		Track                    interface{}
+		RemoteTrack              RemoteTrack
 	}
 	TrackUnsubscribed struct {
 		PID, Identity, TID, Kind string
-		Track                    interface{}
+		RemoteTrack              RemoteTrack
 	}
 	RoomDisconnected struct{ Reason string }
 	RoomReconnected  struct{}
