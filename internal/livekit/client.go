@@ -67,12 +67,10 @@ func (c *Client) JoinRoom(roomName, identity string) error {
 				c.onTrackUnpublished(pub, rp)
 			},
 			OnTrackSubscribed: func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
-				rt := &remoteTrackAdapter{track: track}
-				c.onTrackSubscribed(rt, pub, rp)
+				c.onTrackSubscribed(track, pub, rp)
 			},
 			OnTrackUnsubscribed: func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
-				rt := &remoteTrackAdapter{track: track}
-				c.onTrackUnsubscribed(rt, pub, rp)
+				c.onTrackUnsubscribed(track, pub, rp)
 			},
 		},
 	}
@@ -207,6 +205,7 @@ type remoteParticipant interface {
 type remoteTrackPublication interface {
 	SID() string
 	Kind() lksdk.TrackKind
+	Receiver() *webrtc.RTPReceiver
 }
 
 // compile-time interface implementation assertions
@@ -248,12 +247,16 @@ func (c *Client) onRoomReconnected() {
 	c.push(RoomReconnected{})
 }
 
-func (c *Client) onTrackSubscribed(track RemoteTrack, pub remoteTrackPublication, rp remoteParticipant) {
+func (c *Client) onTrackSubscribed(track *webrtc.TrackRemote, pub remoteTrackPublication, rp remoteParticipant) {
+	rt := &remoteTrackAdapter{track: track}
+	rec := &recieverAdapter{receiver: pub.Receiver()}
+
 	c.push(TrackSubscribed{PID: rp.SID(), Identity: rp.Identity(), TID: pub.SID(), Kind: pub.Kind().String(),
-		RemoteTrack: track})
+		RemoteTrack: rt, Receiver: rec})
 }
 
-func (c *Client) onTrackUnsubscribed(track RemoteTrack, pub remoteTrackPublication, rp remoteParticipant) {
+func (c *Client) onTrackUnsubscribed(track *webrtc.TrackRemote, pub remoteTrackPublication, rp remoteParticipant) {
+	rt := &remoteTrackAdapter{track: track}
 	c.push(TrackUnsubscribed{PID: rp.SID(), Identity: rp.Identity(), TID: pub.SID(), Kind: pub.Kind().String(),
-		RemoteTrack: track})
+		RemoteTrack: rt})
 }

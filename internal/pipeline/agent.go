@@ -44,11 +44,10 @@ func NewAgent(cfg AgentConfig, l *layout.LayoutView) *Agent {
 	cfg.Policy = NewPolicy(cfg.Config.IncludeKind, cfg.Config.ExcludeKind)
 
 	return &Agent{
-		cfg:                  cfg,
-		layoutView:           l,
-		roomSnap:             NewRoomSnapshot(), // room snapshot is single-threaded, no locks
-		trackPipelineManager: processor.NewTrackPipelineManager(cfg.Logger),
-		evCh:                 make(chan SystemEvent, 64),
+		cfg:        cfg,
+		layoutView: l,
+		roomSnap:   NewRoomSnapshot(), // room snapshot is single-threaded, no locks
+		evCh:       make(chan SystemEvent, 64),
 	}
 }
 
@@ -61,6 +60,8 @@ func (a *Agent) OnLayoutStageUpdate(s *layout.Stage) {
 func (a *Agent) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	a.trackPipelineManager = processor.NewTrackPipelineManager(a.cfg.Logger, runCtx)
 
 	lg := a.cfg.Logger
 	lg.Infof("agent starting for room=%s identity=%s", a.cfg.Config.Room, a.cfg.Config.Identity)
@@ -195,7 +196,7 @@ func (a *Agent) applyEvent(ev SystemEvent) {
 			case lk.TrackSubscribed:
 				// TODO properly convert to video-full, video-low, pause
 				a.roomSnap.UpsertSubCache(lkEvt.TID, DecisionAction(lkEvt.Kind))
-				_, err := a.trackPipelineManager.NewTrackPipeline(lkEvt.RemoteTrack)
+				_, err := a.trackPipelineManager.NewTrackPipeline(lkEvt.RemoteTrack, lkEvt.Receiver)
 				if err != nil {
 					a.cfg.Logger.Errorf("error creating track pipeline: %v", err)
 				}

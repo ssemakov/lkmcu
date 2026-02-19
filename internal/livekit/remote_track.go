@@ -1,6 +1,10 @@
 package livekit
 
-import "github.com/pion/webrtc/v4"
+import (
+	"time"
+
+	"github.com/pion/webrtc/v4"
+)
 
 // RemoteTrack represents a track that is subscribed to by the client.
 // It provides methods to read RTP packets and get track information.
@@ -9,6 +13,7 @@ type RemoteTrack interface {
 	Kind() string
 	ReadRTP() ([]byte, error)
 	SSRC() uint32
+	SetReadDeadline(time.Time) error
 }
 
 // remoteTrackAdapter adapts a webrtc.TrackRemote to the RemoteTrack interface.
@@ -30,4 +35,8 @@ func (a *remoteTrackAdapter) ReadRTP() ([]byte, error) {
 
 func (a *remoteTrackAdapter) SSRC() uint32 {
 	return (uint32)(a.track.SSRC())
+}
+
+func (a *remoteTrackAdapter) SetReadDeadline(t time.Time) error {
+	return a.track.SetReadDeadline(t)
 }

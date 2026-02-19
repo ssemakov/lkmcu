@@ -1,6 +1,14 @@
 package processor
 
 import (
+	"context"
+	"errors"
+	"io"
+	"net"
+	"sync"
+	"time"
+
+	"github.com/pion/transport/v3/packetio"
 	"github.com/ssemakov/lkmcu/internal/livekit"
 	"github.com/ssemakov/lkmcu/internal/logging"
 	"github.com/ssemakov/lkmcu/internal/media/clock"
@@ -16,56 +24,200 @@ type Packet interface {
 // The registry of pipelines is maintained by the TracksRuntime
 type TrackPipeline interface {
 	// Start the pipeline.
-	Start() error
+	Start()
 	// Stop the pipeline and release resources.
-	Stop() error
-	// OnRTP is called when a new RTP packet is received for processing.
-	OnRTP(packet Packet) error
-	OnRTCP(packet Packet) error
-
-	// OnTick is called periodically to process buffered packets and output frames.
-	// OnTick(packet Packet) error
+	Stop()
 }
 
 // TrackPipelineFactory defines an interface for creating new track pipelines.
 type TrackPipelineFactory interface {
-	NewTrackPipeline(track livekit.RemoteTrack) (TrackPipeline, error)
+	NewTrackPipeline(track livekit.RemoteTrack, receiver livekit.Receiver) (TrackPipeline, error)
 }
 
+type TrackPipelineConfig struct {
+	RTPReadDeadline  time.Duration
+	RTCPReadDeadline time.Duration
+}
 type DefaultTrackPipelineFactory struct {
 	Logger logging.Logger
-}
-
-func (f *DefaultTrackPipelineFactory) NewTrackPipeline(track livekit.RemoteTrack) (TrackPipeline, error) {
-	return &trackPipeline{
-		buffer: nil,
-		mapper: nil,
-		logger: f.Logger,
-	}, nil
+	Ctx    context.Context
+	Config TrackPipelineConfig
 }
 
 type trackPipeline struct {
-	buffer *jitter_buffer.Buffer
-	mapper *clock.ClockMapper
-	logger logging.Logger
+	buffer   *jitter_buffer.Buffer
+	mapper   *clock.ClockMapper
+	track    livekit.RemoteTrack
+	receiver livekit.Receiver
+	config   TrackPipelineConfig
+	ctx      context.Context
+	cancel   context.CancelFunc
+	logger   logging.Logger
+	wg       sync.WaitGroup
 }
 
-func (p *trackPipeline) Start() error {
-	// starts go routine to process RTP packets from the buffer and output frames.
+func DefaultTrackPipelineConfig() TrackPipelineConfig {
+	return TrackPipelineConfig{
+		RTPReadDeadline:  100 * time.Millisecond,
+		RTCPReadDeadline: 100 * time.Millisecond,
+	}
+}
+
+func (f *DefaultTrackPipelineFactory) NewTrackPipeline(track livekit.RemoteTrack, receiver livekit.Receiver) (TrackPipeline, error) {
+	runCtx, cancel := context.WithCancel(f.Ctx)
+	config := f.Config
+	if config == (TrackPipelineConfig{}) {
+		config = DefaultTrackPipelineConfig()
+	}
+
+	return &trackPipeline{
+		buffer:   nil,
+		mapper:   nil,
+		track:    track,
+		receiver: receiver,
+		config:   config,
+		ctx:      runCtx,
+		cancel:   cancel,
+		logger:   f.Logger,
+		wg:       sync.WaitGroup{},
+	}, nil
+}
+
+func (p *trackPipeline) Start() {
+	p.wg.Add(2)
+
+	go func() {
+		defer p.wg.Done()
+
+		for {
+			select {
+			case <-p.ctx.Done():
+				return
+			default:
+				err := p.handleRTP()
+				switch {
+				case p.isTimeout(err):
+					// expected when no packets are available, just return and wait for the next read
+					continue
+				case errors.Is(err, io.EOF),
+					errors.Is(err, io.ErrClosedPipe),
+					errors.Is(err, context.Canceled):
+					// expected when the track or receiver is closed, just return and stop the pipeline
+					return
+				default:
+					if err != nil {
+						p.logger.Errorf("error handling RTCP: %v", err)
+						return // if there's an error other than timeout or expected closure, stop the pipeline
+					}
+				}
+			}
+		}
+	}()
+
+	go func() {
+		defer p.wg.Done()
+
+		for {
+			select {
+			case <-p.ctx.Done():
+				return
+			default:
+				err := p.handleRTCP()
+				switch {
+				case p.isTimeout(err):
+					// expected when no packets are available, just return and wait for the next read
+					continue
+				case errors.Is(err, io.EOF),
+					errors.Is(err, io.ErrClosedPipe),
+					errors.Is(err, context.Canceled):
+					// expected when the track or receiver is closed, just return and stop the pipeline
+					return
+				default:
+					if err != nil {
+						p.logger.Errorf("error handling RTCP: %v", err)
+						return // if there's an error other than timeout or expected closure, stop the pipeline
+					}
+				}
+			}
+		}
+	}()
+}
+
+func (p *trackPipeline) handleRTP() error {
+	err := p.track.SetReadDeadline(time.Now().Add(p.config.RTPReadDeadline))
+
+	if err != nil {
+		return err
+	}
+
+	pkt, err := p.track.ReadRTP()
+
+	if err != nil {
+		return err
+	}
+
+	// log and return other
+	err = p.onRTP(pkt)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
-func (p *trackPipeline) Stop() error {
-	// stops the processing go routine and releases resources.
+func (p *trackPipeline) handleRTCP() error {
+	err := p.receiver.SetReadDeadline(time.Now().Add(p.config.RTCPReadDeadline))
+	if err != nil {
+		return err
+	}
+
+	pkt, err := p.receiver.ReadRTCP()
+	if err != nil {
+		return err
+	}
+
+	err = p.onRTCP(pkt)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
-func (p *trackPipeline) OnRTP(packet Packet) error {
+func (p *trackPipeline) Stop() {
+	p.cancel()
+	err := p.track.SetReadDeadline(time.Now())
+
+	if err != nil {
+		p.logger.Errorf("error setting track read deadline during stop: %v", err)
+	}
+	p.receiver.SetReadDeadline(time.Now())
+
+	if err != nil {
+		p.logger.Errorf("error setting receiver read deadline during stop: %v", err)
+	}
+	p.wg.Wait()
+}
+
+func (p *trackPipeline) onRTP(packet Packet) error {
 	// push packet into the jitter buffer for processing.
 	return nil
 }
 
-func (p *trackPipeline) OnRTCP(packet Packet) error {
+func (p *trackPipeline) onRTCP(packet Packet) error {
 	// push to updateFromRTCP or other RTCP handling.
 	return nil
+}
+
+func (p *trackPipeline) isTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if errors.Is(err, packetio.ErrTimeout) {
+		return true
+	}
+
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }

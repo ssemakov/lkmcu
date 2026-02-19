@@ -11,6 +11,7 @@ type (
 	TrackSubscribed   struct {
 		PID, Identity, TID, Kind string
 		RemoteTrack              RemoteTrack
+		Receiver                 Receiver
 	}
 	TrackUnsubscribed struct {
 		PID, Identity, TID, Kind string
