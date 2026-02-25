@@ -3,6 +3,7 @@ package livekit
 import (
 	"errors"
 	"sync/atomic"
+	"time"
 
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/pion/webrtc/v4"
@@ -208,10 +209,19 @@ type remoteTrackPublication interface {
 	Receiver() *webrtc.RTPReceiver
 }
 
+type webrtcRemoteTrack interface {
+	ID() string
+	SetReadDeadline(time.Time) error
+	SSRC() webrtcSSRC
+}
+
+type webrtcSSRC = webrtc.SSRC
+
 // compile-time interface implementation assertions
 var (
 	_ remoteParticipant      = (*lksdk.RemoteParticipant)(nil)
 	_ remoteTrackPublication = (*lksdk.RemoteTrackPublication)(nil)
+	_ webrtcRemoteTrack      = (*webrtc.TrackRemote)(nil)
 )
 
 func (c *Client) onParticipantJoined(p remoteParticipant) {
@@ -247,15 +257,18 @@ func (c *Client) onRoomReconnected() {
 	c.push(RoomReconnected{})
 }
 
-func (c *Client) onTrackSubscribed(track *webrtc.TrackRemote, pub remoteTrackPublication, rp remoteParticipant) {
+func (c *Client) onTrackSubscribed(track webrtcRemoteTrack, pub remoteTrackPublication, rp remoteParticipant) {
 	rt := &remoteTrackAdapter{track: track}
-	rec := &recieverAdapter{receiver: pub.Receiver()}
+	var rec Receiver
+	if r := pub.Receiver(); r != nil {
+		rec = &recieverAdapter{receiver: r}
+	}
 
 	c.push(TrackSubscribed{PID: rp.SID(), Identity: rp.Identity(), TID: pub.SID(), Kind: pub.Kind().String(),
 		RemoteTrack: rt, Receiver: rec})
 }
 
-func (c *Client) onTrackUnsubscribed(track *webrtc.TrackRemote, pub remoteTrackPublication, rp remoteParticipant) {
+func (c *Client) onTrackUnsubscribed(track webrtcRemoteTrack, pub remoteTrackPublication, rp remoteParticipant) {
 	rt := &remoteTrackAdapter{track: track}
 	c.push(TrackUnsubscribed{PID: rp.SID(), Identity: rp.Identity(), TID: pub.SID(), Kind: pub.Kind().String(),
 		RemoteTrack: rt})

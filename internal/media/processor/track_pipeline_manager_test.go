@@ -1,10 +1,10 @@
 package processor
 
 import (
-	"errors"
 	"testing"
+	"time"
 
-	lk "github.com/ssemakov/lkmcu/internal/livekit"
+	"github.com/ssemakov/lkmcu/internal/livekit"
 )
 
 type fakeTPFactory struct {
@@ -13,7 +13,7 @@ type fakeTPFactory struct {
 	calls    int
 }
 
-func (f *fakeTPFactory) NewTrackPipeline(track lk.RemoteTrack) (TrackPipeline, error) {
+func (f *fakeTPFactory) NewTrackPipeline(track livekit.RemoteTrack, receiver livekit.Receiver) (TrackPipeline, error) {
 	f.calls++
 	if f.err != nil {
 		return nil, f.err
@@ -22,33 +22,42 @@ func (f *fakeTPFactory) NewTrackPipeline(track lk.RemoteTrack) (TrackPipeline, e
 }
 
 type fakeTP struct {
-	stopErr    error
-	stopCalled int
+	startCalled int
+	stopCalled  int
 }
 
-func (p *fakeTP) Start() error               { return nil }
-func (p *fakeTP) OnRTP(packet Packet) error  { return nil }
-func (p *fakeTP) OnRTCP(packet Packet) error { return nil }
-func (p *fakeTP) Stop() error {
+func (p *fakeTP) Start() {
+	p.startCalled++
+}
+
+func (p *fakeTP) Stop() {
 	p.stopCalled++
-	return p.stopErr
 }
 
 type fakeTrack struct {
 	id string
 }
 
-func (t fakeTrack) ID() string               { return t.id }
-func (t fakeTrack) Kind() string             { return "video" }
-func (t fakeTrack) ReadRTP() ([]byte, error) { return nil, nil }
-func (t fakeTrack) SSRC() uint32             { return 1234 }
+func (t fakeTrack) ID() string                      { return t.id }
+func (t fakeTrack) Kind() string                    { return "video" }
+func (t fakeTrack) ReadRTP() ([]byte, error)        { return nil, nil }
+func (t fakeTrack) SSRC() uint32                    { return 1234 }
+func (t fakeTrack) SetReadDeadline(time.Time) error { return nil }
+
+type fakeReceiver struct {
+}
+
+func (r fakeReceiver) ReadRTCP() ([]byte, error)         { return nil, nil }
+func (r fakeReceiver) SetReadDeadline(t time.Time) error { return nil }
 
 func TestTrackPipelineManager_NewTrackPipeline(t *testing.T) {
-	factory := &fakeTPFactory{pipeline: &fakeTP{}}
+	pipeline := &fakeTP{}
+	factory := &fakeTPFactory{pipeline: pipeline}
 	m := NewTrackPipelineManagerWithFactory(factory).(*trackPipelineManager)
 	track := fakeTrack{id: "t1"}
+	receiver := fakeReceiver{}
 
-	got, err := m.NewTrackPipeline(track)
+	got, err := m.NewTrackPipeline(track, receiver)
 	if err != nil {
 		t.Fatalf("NewTrackPipeline() error = %v", err)
 	}
@@ -61,13 +70,17 @@ func TestTrackPipelineManager_NewTrackPipeline(t *testing.T) {
 	if _, ok := m.pipelines["t1"]; !ok {
 		t.Fatal("pipeline for track t1 was not stored")
 	}
+	if pipeline.startCalled != 1 {
+		t.Fatalf("Start() calls = %d, want 1", pipeline.startCalled)
+	}
 }
 
 func TestTrackPipelineManager_RemoveTrackPipeline_NotFound(t *testing.T) {
 	m := NewTrackPipelineManagerWithFactory(&fakeTPFactory{pipeline: &fakeTP{}}).(*trackPipelineManager)
 
-	if err := m.RemoveTrackPipeline("missing"); err != nil {
-		t.Fatalf("RemoveTrackPipeline() error = %v, want nil", err)
+	expected := "track pipeline not found for track ID: missing"
+	if err := m.RemoveTrackPipeline("missing"); err == nil || err.Error() != expected {
+		t.Fatalf("RemoveTrackPipeline() error = %v, want %q", err, expected)
 	}
 }
 
@@ -84,23 +97,5 @@ func TestTrackPipelineManager_RemoveTrackPipeline(t *testing.T) {
 	}
 	if _, ok := m.pipelines["t1"]; ok {
 		t.Fatal("pipeline t1 should be deleted after successful Stop")
-	}
-}
-
-func TestTrackPipelineManager_RemoveTrackPipeline_StopError(t *testing.T) {
-	wantErr := errors.New("stop failed")
-	p := &fakeTP{stopErr: wantErr}
-	m := NewTrackPipelineManagerWithFactory(&fakeTPFactory{pipeline: p}).(*trackPipelineManager)
-	m.pipelines["t1"] = p
-
-	err := m.RemoveTrackPipeline("t1")
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("RemoveTrackPipeline() error = %v, want %v", err, wantErr)
-	}
-	if p.stopCalled != 1 {
-		t.Fatalf("Stop() calls = %d, want 1", p.stopCalled)
-	}
-	if _, ok := m.pipelines["t1"]; !ok {
-		t.Fatal("pipeline t1 should remain when Stop returns error")
 	}
 }

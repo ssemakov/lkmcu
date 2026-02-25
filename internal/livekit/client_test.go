@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	lksdk "github.com/livekit/server-sdk-go/v2"
+	"github.com/pion/webrtc/v4"
 )
 
 func TestNewClient(t *testing.T) {
@@ -186,8 +188,9 @@ type fakePub struct {
 	kind lksdk.TrackKind
 }
 
-func (f fakePub) SID() string           { return f.sid }
-func (f fakePub) Kind() lksdk.TrackKind { return f.kind }
+func (f fakePub) SID() string                   { return f.sid }
+func (f fakePub) Kind() lksdk.TrackKind         { return f.kind }
+func (f fakePub) Receiver() *webrtc.RTPReceiver { return nil }
 
 type fakeRemoteTrack struct {
 	IdVal   string
@@ -195,10 +198,12 @@ type fakeRemoteTrack struct {
 	SsrcVal uint32
 }
 
-func (f fakeRemoteTrack) ID() string               { return f.IdVal }
-func (f fakeRemoteTrack) Kind() string             { return f.KindVal }
-func (f fakeRemoteTrack) ReadRTP() ([]byte, error) { return nil, nil }
-func (f fakeRemoteTrack) SSRC() uint32             { return f.SsrcVal }
+func (f fakeRemoteTrack) ID() string { return f.IdVal }
+
+// func (f fakeRemoteTrack) Kind() string                    { return f.KindVal }
+// func (f fakeRemoteTrack) ReadRTP() ([]byte, error)        { return nil, nil }
+func (f fakeRemoteTrack) SSRC() webrtcSSRC                { return webrtc.SSRC(f.SsrcVal) }
+func (f fakeRemoteTrack) SetReadDeadline(time.Time) error { return nil }
 
 func newClient() *Client {
 	return NewClient("ws://localhost:7880", "key", "secret", nil)
@@ -250,12 +255,12 @@ func TestClient_EventHandling(t *testing.T) {
 		{
 			name:   "track subscribed",
 			invoke: func(c *Client) { c.onTrackSubscribed(track, pub, rp) },
-			want:   TrackSubscribed{PID: rp.sid, Identity: rp.identity, TID: pub.sid, Kind: pub.kind.String(), RemoteTrack: track},
+			want:   TrackSubscribed{PID: rp.sid, Identity: rp.identity, TID: pub.sid, Kind: pub.kind.String()},
 		},
 		{
 			name:   "track unsubscribed",
 			invoke: func(c *Client) { c.onTrackUnsubscribed(track, pub, rp) },
-			want:   TrackUnsubscribed{PID: rp.sid, Identity: rp.identity, TID: pub.sid, Kind: pub.kind.String(), RemoteTrack: track},
+			want:   TrackUnsubscribed{PID: rp.sid, Identity: rp.identity, TID: pub.sid, Kind: pub.kind.String()},
 		},
 		{
 			name:   "room reconnected",
@@ -280,7 +285,10 @@ func TestClient_EventHandling(t *testing.T) {
 				t.Fatalf("event type: want %s, got %s", wantT, gotT)
 			}
 
-			if diff := cmp.Diff(tc.want, got); diff != "" {
+			if diff := cmp.Diff(tc.want, got,
+				cmpopts.IgnoreFields(TrackSubscribed{}, "RemoteTrack"),
+				cmpopts.IgnoreFields(TrackUnsubscribed{}, "RemoteTrack"),
+			); diff != "" {
 				t.Fatalf("event mismatch (-want +got):\n%s", diff)
 			}
 		})

@@ -10,6 +10,7 @@ import (
 	"github.com/ssemakov/lkmcu/internal/layout"
 	lk "github.com/ssemakov/lkmcu/internal/livekit"
 	"github.com/ssemakov/lkmcu/internal/logging"
+	"github.com/ssemakov/lkmcu/internal/media/processor"
 )
 
 func TestNewAgent(t *testing.T) {
@@ -145,10 +146,21 @@ type fakeRemoteTrack struct {
 	ssrc uint32
 }
 
-func (f fakeRemoteTrack) ID() string               { return f.id }
-func (f fakeRemoteTrack) Kind() string             { return f.kind }
-func (f fakeRemoteTrack) ReadRTP() ([]byte, error) { return nil, nil }
-func (f fakeRemoteTrack) SSRC() uint32             { return f.ssrc }
+func (f fakeRemoteTrack) ID() string                      { return f.id }
+func (f fakeRemoteTrack) Kind() string                    { return f.kind }
+func (f fakeRemoteTrack) ReadRTP() ([]byte, error)        { return nil, nil }
+func (f fakeRemoteTrack) SSRC() uint32                    { return f.ssrc }
+func (f fakeRemoteTrack) SetReadDeadline(time.Time) error { return nil }
+
+type noopTrackPipelineManager struct{}
+
+func (noopTrackPipelineManager) NewTrackPipeline(lk.RemoteTrack, lk.Receiver) (processor.TrackPipeline, error) {
+	return nil, nil
+}
+
+func (noopTrackPipelineManager) RemoveTrackPipeline(string) error {
+	return nil
+}
 
 func newMockLkClient() *mockLkClient {
 	return &mockLkClient{
@@ -289,6 +301,7 @@ func TestAgent_applyEvent(t *testing.T) {
 			agent := NewAgent(AgentConfig{
 				Logger: logging.NewNullLogger("test", "info"),
 			}, layout.DefaultLayoutView())
+			agent.trackPipelineManager = noopTrackPipelineManager{}
 
 			if tc.setup != nil {
 				tc.setup(agent)
@@ -415,6 +428,7 @@ func TestAgent_participantOnStageJoinPublishTrackLeaves(t *testing.T) {
 			IncludeKind: "video,audio",
 		},
 	}, layout.DefaultLayoutView())
+	agent.trackPipelineManager = noopTrackPipelineManager{}
 
 	agent.applyEvent(LayoutChangedEvent{
 		Stage: &layout.Stage{
