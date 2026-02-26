@@ -191,7 +191,7 @@ func (p *trackPipeline) Stop() {
 	if err != nil {
 		p.logger.Errorf("error setting track read deadline during stop: %v", err)
 	}
-	p.receiver.SetReadDeadline(time.Now())
+	err = p.receiver.SetReadDeadline(time.Now())
 
 	if err != nil {
 		p.logger.Errorf("error setting receiver read deadline during stop: %v", err)
