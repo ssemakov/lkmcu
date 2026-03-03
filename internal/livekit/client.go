@@ -6,6 +6,8 @@ import (
 	"time"
 
 	lksdk "github.com/livekit/server-sdk-go/v2"
+	"github.com/pion/interceptor"
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -213,6 +215,7 @@ type webrtcRemoteTrack interface {
 	ID() string
 	SetReadDeadline(time.Time) error
 	SSRC() webrtcSSRC
+	ReadRTP() (*rtp.Packet, interceptor.Attributes, error)
 }
 
 type webrtcSSRC = webrtc.SSRC
@@ -261,7 +264,7 @@ func (c *Client) onTrackSubscribed(track webrtcRemoteTrack, pub remoteTrackPubli
 	rt := &remoteTrackAdapter{track: track}
 
 	r := pub.Receiver()
-	rec := &recieverAdapter{receiver: r}
+	rec := &receiverAdapter{receiver: r}
 
 	c.push(TrackSubscribed{PID: rp.SID(), Identity: rp.Identity(), TID: pub.SID(), Kind: pub.Kind().String(),
 		RemoteTrack: rt, Receiver: rec})

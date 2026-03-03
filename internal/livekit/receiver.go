@@ -3,30 +3,34 @@ package livekit
 import (
 	"time"
 
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 )
 
 type Receiver interface {
-	ReadRTCP() ([]byte, error)
+	ReadRTCP() ([]rtcp.Packet, error)
 	SetReadDeadline(t time.Time) error
 	Stop() error
 }
 
-type recieverAdapter struct {
+type receiverAdapter struct {
 	receiver *webrtc.RTPReceiver
 }
 
-func (a *recieverAdapter) ReadRTCP() ([]byte, error) {
+func (a *receiverAdapter) ReadRTCP() ([]rtcp.Packet, error) {
 	if a.receiver == nil {
 		return nil, nil
 	}
 
-	return nil, nil // temp
+	rtcp, _, err := a.receiver.ReadRTCP()
+	if err != nil {
+		return nil, err
+	}
 
-	// return a.receiver.ReadRTCP()
+	return rtcp, nil
 }
 
-func (a *recieverAdapter) SetReadDeadline(t time.Time) error {
+func (a *receiverAdapter) SetReadDeadline(t time.Time) error {
 	if a.receiver == nil {
 		return nil
 	}
@@ -34,7 +38,7 @@ func (a *recieverAdapter) SetReadDeadline(t time.Time) error {
 	return a.receiver.SetReadDeadline(t)
 }
 
-func (a *recieverAdapter) Stop() error {
+func (a *receiverAdapter) Stop() error {
 	if a.receiver == nil {
 		return nil
 	}

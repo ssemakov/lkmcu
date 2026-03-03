@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pion/rtcp"
+	"github.com/pion/rtp"
 	"github.com/ssemakov/lkmcu/internal/livekit"
 )
 
@@ -40,15 +42,16 @@ type fakeTrack struct {
 
 func (t fakeTrack) ID() string                      { return t.id }
 func (t fakeTrack) Kind() string                    { return "video" }
-func (t fakeTrack) ReadRTP() ([]byte, error)        { return nil, nil }
+func (t fakeTrack) ReadRTP() (*rtp.Packet, error)   { return nil, nil }
 func (t fakeTrack) SSRC() uint32                    { return 1234 }
 func (t fakeTrack) SetReadDeadline(time.Time) error { return nil }
 
 type fakeReceiver struct {
 }
 
-func (r fakeReceiver) ReadRTCP() ([]byte, error)         { return nil, nil }
+func (r fakeReceiver) ReadRTCP() ([]rtcp.Packet, error)  { return nil, nil }
 func (r fakeReceiver) SetReadDeadline(t time.Time) error { return nil }
+func (r fakeReceiver) Stop() error                       { return nil }
 
 func TestTrackPipelineManager_NewTrackPipeline(t *testing.T) {
 	pipeline := &fakeTP{}

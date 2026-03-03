@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pion/rtcp"
+	"github.com/pion/rtp"
 	"github.com/pion/transport/v3/packetio"
 	"github.com/ssemakov/lkmcu/internal/livekit"
 	"github.com/ssemakov/lkmcu/internal/logging"
@@ -197,12 +199,12 @@ func (p *trackPipeline) handleRTCP() error {
 		return err
 	}
 
-	pkt, err := p.receiver.ReadRTCP()
+	pkts, err := p.receiver.ReadRTCP()
 	if err != nil {
 		return err
 	}
 
-	err = p.onRTCP(pkt)
+	err = p.onRTCP(pkts)
 	if err != nil {
 		return err
 	}
@@ -210,13 +212,15 @@ func (p *trackPipeline) handleRTCP() error {
 	return nil
 }
 
-func (p *trackPipeline) onRTP(packet Packet) error {
-	// push packet into the jitter buffer for processing.
+func (p *trackPipeline) onRTP(*rtp.Packet) error {
+	p.logger.Debugf("Received RTP packet for track %s", p.track.ID())
+
 	return nil
 }
 
-func (p *trackPipeline) onRTCP(packet Packet) error {
-	// push to updateFromRTCP or other RTCP handling.
+func (p *trackPipeline) onRTCP(packets []rtcp.Packet) error {
+	p.logger.Debugf("Received RTCP packets for track %s: %v", p.track.ID(), packets)
+
 	return nil
 }
 

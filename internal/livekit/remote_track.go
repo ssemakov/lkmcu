@@ -2,6 +2,8 @@ package livekit
 
 import (
 	"time"
+
+	"github.com/pion/rtp"
 )
 
 // RemoteTrack represents a track that is subscribed to by the client.
@@ -9,7 +11,7 @@ import (
 type RemoteTrack interface {
 	ID() string
 	Kind() string
-	ReadRTP() ([]byte, error)
+	ReadRTP() (*rtp.Packet, error)
 	SSRC() uint32
 	SetReadDeadline(time.Time) error
 }
@@ -27,8 +29,9 @@ func (a *remoteTrackAdapter) Kind() string {
 	return ""
 }
 
-func (a *remoteTrackAdapter) ReadRTP() ([]byte, error) {
-	return nil, nil
+func (a *remoteTrackAdapter) ReadRTP() (*rtp.Packet, error) {
+	pkts, _, err := a.track.ReadRTP()
+	return pkts, err
 }
 
 func (a *remoteTrackAdapter) SSRC() uint32 {

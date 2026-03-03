@@ -9,6 +9,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	lksdk "github.com/livekit/server-sdk-go/v2"
+	"github.com/pion/interceptor"
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -204,6 +206,9 @@ func (f fakeRemoteTrack) ID() string { return f.IdVal }
 // func (f fakeRemoteTrack) ReadRTP() ([]byte, error)        { return nil, nil }
 func (f fakeRemoteTrack) SSRC() webrtcSSRC                { return webrtc.SSRC(f.SsrcVal) }
 func (f fakeRemoteTrack) SetReadDeadline(time.Time) error { return nil }
+func (f fakeRemoteTrack) ReadRTP() (*rtp.Packet, interceptor.Attributes, error) {
+	return nil, nil, nil
+}
 
 func newClient() *Client {
 	return NewClient("ws://localhost:7880", "key", "secret", nil)
@@ -255,7 +260,8 @@ func TestClient_EventHandling(t *testing.T) {
 		{
 			name:   "track subscribed",
 			invoke: func(c *Client) { c.onTrackSubscribed(track, pub, rp) },
-			want:   TrackSubscribed{PID: rp.sid, Identity: rp.identity, TID: pub.sid, Kind: pub.kind.String()},
+			want: TrackSubscribed{PID: rp.sid, Identity: rp.identity, TID: pub.sid, Kind: pub.kind.String(),
+				RemoteTrack: &remoteTrackAdapter{track: track}, Receiver: &receiverAdapter{receiver: nil}},
 		},
 		{
 			name:   "track unsubscribed",
@@ -288,6 +294,7 @@ func TestClient_EventHandling(t *testing.T) {
 			if diff := cmp.Diff(tc.want, got,
 				cmpopts.IgnoreFields(TrackSubscribed{}, "RemoteTrack"),
 				cmpopts.IgnoreFields(TrackUnsubscribed{}, "RemoteTrack"),
+				cmpopts.IgnoreUnexported(receiverAdapter{}),
 			); diff != "" {
 				t.Fatalf("event mismatch (-want +got):\n%s", diff)
 			}

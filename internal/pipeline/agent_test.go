@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/pion/rtp"
 	"github.com/ssemakov/lkmcu/internal/config"
 	"github.com/ssemakov/lkmcu/internal/layout"
 	lk "github.com/ssemakov/lkmcu/internal/livekit"
@@ -148,7 +149,7 @@ type fakeRemoteTrack struct {
 
 func (f fakeRemoteTrack) ID() string                      { return f.id }
 func (f fakeRemoteTrack) Kind() string                    { return f.kind }
-func (f fakeRemoteTrack) ReadRTP() ([]byte, error)        { return nil, nil }
+func (f fakeRemoteTrack) ReadRTP() (*rtp.Packet, error)   { return nil, nil }
 func (f fakeRemoteTrack) SSRC() uint32                    { return f.ssrc }
 func (f fakeRemoteTrack) SetReadDeadline(time.Time) error { return nil }
 
