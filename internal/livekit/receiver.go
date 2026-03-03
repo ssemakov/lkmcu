@@ -9,6 +9,7 @@ import (
 type Receiver interface {
 	ReadRTCP() ([]byte, error)
 	SetReadDeadline(t time.Time) error
+	Stop() error
 }
 
 type recieverAdapter struct {
@@ -16,9 +17,27 @@ type recieverAdapter struct {
 }
 
 func (a *recieverAdapter) ReadRTCP() ([]byte, error) {
-	return nil, nil
+	if a.receiver == nil {
+		return nil, nil
+	}
+
+	return nil, nil // temp
+
+	// return a.receiver.ReadRTCP()
 }
 
 func (a *recieverAdapter) SetReadDeadline(t time.Time) error {
+	if a.receiver == nil {
+		return nil
+	}
+
 	return a.receiver.SetReadDeadline(t)
+}
+
+func (a *recieverAdapter) Stop() error {
+	if a.receiver == nil {
+		return nil
+	}
+
+	return a.receiver.Stop()
 }

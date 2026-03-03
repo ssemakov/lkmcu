@@ -64,6 +64,10 @@ func DefaultTrackPipelineConfig() TrackPipelineConfig {
 }
 
 func (f *DefaultTrackPipelineFactory) NewTrackPipeline(track livekit.RemoteTrack, receiver livekit.Receiver) (TrackPipeline, error) {
+	if f.Ctx == nil {
+		return nil, errors.New("context is required in TrackPipelineFactory")
+	}
+
 	runCtx, cancel := context.WithCancel(f.Ctx)
 	config := f.Config
 	if config == (TrackPipelineConfig{}) {
@@ -106,7 +110,7 @@ func (p *trackPipeline) Start() {
 					return
 				default:
 					if err != nil {
-						p.logger.Errorf("error handling RTCP: %v", err)
+						p.logger.Errorf("error handling RTP: %v", err)
 						return // if there's an error other than timeout or expected closure, stop the pipeline
 					}
 				}
@@ -141,6 +145,28 @@ func (p *trackPipeline) Start() {
 			}
 		}
 	}()
+}
+
+func (p *trackPipeline) Stop() {
+	p.cancel()
+	err := p.track.SetReadDeadline(time.Now())
+
+	if err != nil {
+		p.logger.Errorf("error setting track read deadline during stop: %v", err)
+	}
+	err = p.receiver.SetReadDeadline(time.Now())
+
+	if err != nil {
+		p.logger.Errorf("error setting receiver read deadline during stop: %v", err)
+	}
+
+	p.receiver.Stop()
+
+	timer := time.AfterFunc(2*time.Second, func() {
+		p.logger.Errorf("Still waiting for track pipeline goroutine to stop (track_id=%s)", p.track.ID())
+	})
+	p.wg.Wait()
+	timer.Stop()
 }
 
 func (p *trackPipeline) handleRTP() error {
@@ -182,21 +208,6 @@ func (p *trackPipeline) handleRTCP() error {
 	}
 
 	return nil
-}
-
-func (p *trackPipeline) Stop() {
-	p.cancel()
-	err := p.track.SetReadDeadline(time.Now())
-
-	if err != nil {
-		p.logger.Errorf("error setting track read deadline during stop: %v", err)
-	}
-	err = p.receiver.SetReadDeadline(time.Now())
-
-	if err != nil {
-		p.logger.Errorf("error setting receiver read deadline during stop: %v", err)
-	}
-	p.wg.Wait()
 }
 
 func (p *trackPipeline) onRTP(packet Packet) error {

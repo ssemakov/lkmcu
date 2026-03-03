@@ -259,10 +259,9 @@ func (c *Client) onRoomReconnected() {
 
 func (c *Client) onTrackSubscribed(track webrtcRemoteTrack, pub remoteTrackPublication, rp remoteParticipant) {
 	rt := &remoteTrackAdapter{track: track}
-	var rec Receiver
-	if r := pub.Receiver(); r != nil {
-		rec = &recieverAdapter{receiver: r}
-	}
+
+	r := pub.Receiver()
+	rec := &recieverAdapter{receiver: r}
 
 	c.push(TrackSubscribed{PID: rp.SID(), Identity: rp.Identity(), TID: pub.SID(), Kind: pub.Kind().String(),
 		RemoteTrack: rt, Receiver: rec})
