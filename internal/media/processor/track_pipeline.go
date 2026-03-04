@@ -151,18 +151,18 @@ func (p *trackPipeline) Start() {
 
 func (p *trackPipeline) Stop() {
 	p.cancel()
-	err := p.track.SetReadDeadline(time.Now())
 
-	if err != nil {
+	if err := p.track.SetReadDeadline(time.Now()); err != nil {
 		p.logger.Errorf("error setting track read deadline during stop: %v", err)
 	}
-	err = p.receiver.SetReadDeadline(time.Now())
 
-	if err != nil {
+	if err := p.receiver.SetReadDeadline(time.Now()); err != nil {
 		p.logger.Errorf("error setting receiver read deadline during stop: %v", err)
 	}
 
-	p.receiver.Stop()
+	if err := p.receiver.Stop(); err != nil {
+		p.logger.Errorf("error stopping receiver: %v", err)
+	}
 
 	timer := time.AfterFunc(2*time.Second, func() {
 		p.logger.Errorf("Still waiting for track pipeline goroutine to stop (track_id=%s)", p.track.ID())
