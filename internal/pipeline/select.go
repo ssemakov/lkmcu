@@ -23,7 +23,7 @@ type Decision struct {
 
 type Operations interface {
 	isOperation()
-	Exec(lk *livekit.Client) error
+	Exec(lk livekit.Client) error
 }
 
 type SubscribeOp struct {
@@ -61,15 +61,15 @@ func (o *UpdateOp) String() string {
 	return "UpdateOp{ TrackID: " + o.TrackID + ", PID: " + o.PID + ", Action: " + string(o.Action) + ", Reason: " + o.Reason + " }"
 }
 
-func (o *SubscribeOp) Exec(lk *livekit.Client) error {
+func (o *SubscribeOp) Exec(lk livekit.Client) error {
 	return lk.Subscribe(o.PID, o.TrackID, true)
 }
 
-func (o *UnsubscribeOp) Exec(lk *livekit.Client) error {
+func (o *UnsubscribeOp) Exec(lk livekit.Client) error {
 	return lk.Subscribe(o.PID, o.TrackID, false)
 }
 
-func (o *UpdateOp) Exec(lk *livekit.Client) error {
+func (o *UpdateOp) Exec(lk livekit.Client) error {
 	// return lk.UpdateSubscription(o.TrackID, o.Action)
 	return nil
 }

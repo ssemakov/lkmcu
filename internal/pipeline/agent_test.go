@@ -135,10 +135,35 @@ func TestAgent_consumeLiveKitEvents_CancelsOnRoomClosed(t *testing.T) {
 	}
 }
 
-// Mock lk.Client for testing
-type mockLkClient struct {
-	events chan lk.Event
-	subs   []*lk.Subscription
+func TestAgent_applyEvent_CancelsOnRoomDisconnected(t *testing.T) {
+	agent := NewAgent(AgentConfig{
+		Logger: logging.NewNullLogger("test", "info"),
+	}, layout.DefaultLayoutView())
+	mockLkClient := newMockLkClient()
+	agent.lk = mockLkClient
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		agent.consumeLiveKitEvents(ctx, cancel)
+		close(done)
+	}()
+
+	mockLkClient.events <- lk.RoomDisconnected{}
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected Run to cancel context on RoomDisconnected")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected Run goroutine to exit after RoomDisconnected")
+	}
 }
 
 type fakeRemoteTrack struct {
@@ -163,6 +188,12 @@ func (noopTrackPipelineManager) RemoveTrackPipeline(string) error {
 	return nil
 }
 
+// Mock lk.Client for testing
+type mockLkClient struct {
+	events chan lk.Event
+	subs   []*lk.Subscription
+}
+
 func newMockLkClient() *mockLkClient {
 	return &mockLkClient{
 		events: make(chan lk.Event, 10),
@@ -174,6 +205,23 @@ func (m *mockLkClient) JoinRoom(roomName, identity string) error { return nil }
 func (m *mockLkClient) Close() error                             { return nil }
 func (m *mockLkClient) Events() <-chan lk.Event                  { return m.events }
 func (m *mockLkClient) SubscriptionSnapshot() []*lk.Subscription { return m.subs }
+func (m *mockLkClient) Subscribe(pid, tid string, subscribe bool) error {
+	if !subscribe {
+		return m.unsubscribe(tid, pid)
+	}
+
+	m.subs = append(m.subs, &lk.Subscription{TID: tid, PID: pid})
+	return nil
+}
+func (m *mockLkClient) unsubscribe(tid, pid string) error {
+	for i, sub := range m.subs {
+		if sub.TID == tid && sub.PID == pid {
+			m.subs = append(m.subs[:i], m.subs[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
 
 func TestAgent_applyEvent(t *testing.T) {
 	type testCase struct {
@@ -341,12 +389,12 @@ func TestAgent_applyEvent_LayoutChanged(t *testing.T) {
 
 func TestAgent_reconcileState(t *testing.T) {
 	cases := []struct {
-		name        string
-		initialSnap *RoomSnapshot
-		initialSubs []*lk.Subscription
-		policy      Policy
-		layout      *layout.LayoutView
-		expectedOps []Operations
+		name         string
+		initialSnap  *RoomSnapshot
+		initialSubs  []*lk.Subscription
+		policy       Policy
+		layout       *layout.LayoutView
+		expectedSubs []*lk.Subscription
 	}{
 		{
 			name: "subscribe to new video track",
@@ -356,10 +404,10 @@ func TestAgent_reconcileState(t *testing.T) {
 				s.UpsertTrack("p1", "t1", TrackVideo)
 				return s
 			}(),
-			initialSubs: []*lk.Subscription{},
-			policy:      Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
-			layout:      func() *layout.LayoutView { v, _ := layout.NewLayoutView(""); v.StageTracks["t1"] = "p1"; return v }(),
-			expectedOps: []Operations{&SubscribeOp{TrackID: "t1", PID: "p1", Action: VideoFull, Reason: "video on stage"}},
+			initialSubs:  []*lk.Subscription{},
+			policy:       Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
+			layout:       func() *layout.LayoutView { v, _ := layout.NewLayoutView(""); v.StageTracks["t1"] = "p1"; return v }(),
+			expectedSubs: []*lk.Subscription{{TID: "t1", PID: "p1"}},
 		},
 		{
 			name: "do nothing for existing subscription",
@@ -369,10 +417,10 @@ func TestAgent_reconcileState(t *testing.T) {
 				s.UpsertTrack("p1", "t1", TrackVideo)
 				return s
 			}(),
-			initialSubs: []*lk.Subscription{{TID: "t1", PID: "p1"}},
-			policy:      Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
-			layout:      func() *layout.LayoutView { v, _ := layout.NewLayoutView(""); v.StageTracks["t1"] = "p1"; return v }(),
-			expectedOps: []Operations{},
+			initialSubs:  []*lk.Subscription{{TID: "t1", PID: "p1"}},
+			policy:       Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
+			layout:       func() *layout.LayoutView { v, _ := layout.NewLayoutView(""); v.StageTracks["t1"] = "p1"; return v }(),
+			expectedSubs: []*lk.Subscription{{TID: "t1", PID: "p1"}},
 		},
 		{
 			name: "ignore track when policy excludes its kind",
@@ -382,10 +430,10 @@ func TestAgent_reconcileState(t *testing.T) {
 				s.UpsertTrack("p1", "t1", TrackAudio)
 				return s
 			}(),
-			initialSubs: []*lk.Subscription{},
-			policy:      Policy{ExcludeKinds: []TrackKind{TrackAudio}},
-			layout:      func() *layout.LayoutView { v, _ := layout.NewLayoutView(""); v.StageTracks["t1"] = "p1"; return v }(),
-			expectedOps: []Operations{},
+			initialSubs:  []*lk.Subscription{},
+			policy:       Policy{ExcludeKinds: []TrackKind{TrackAudio}},
+			layout:       func() *layout.LayoutView { v, _ := layout.NewLayoutView(""); v.StageTracks["t1"] = "p1"; return v }(),
+			expectedSubs: []*lk.Subscription{},
 		},
 		{
 			name: "unsubscribe from track of left participant",
@@ -396,7 +444,8 @@ func TestAgent_reconcileState(t *testing.T) {
 			initialSubs: []*lk.Subscription{{TID: "t1", PID: "p1"}},
 			policy:      Policy{IncludeKinds: []TrackKind{TrackVideo, TrackAudio}},
 			layout:      func() *layout.LayoutView { v, _ := layout.NewLayoutView(""); return v }(),
-			expectedOps: []Operations{&UnsubscribeOp{TrackID: "t1", PID: "p1", Reason: "not in decisions / participant left"}},
+			// expectedOps: []Operations{&UnsubscribeOp{TrackID: "t1", PID: "p1", Reason: "not in decisions / participant left"}},
+			expectedSubs: []*lk.Subscription{},
 		},
 	}
 
@@ -407,16 +456,16 @@ func TestAgent_reconcileState(t *testing.T) {
 			}, tc.layout)
 			mockClient := newMockLkClient()
 			agent.lk = mockClient
+			agent.cfg.Policy = tc.policy
 
 			agent.roomSnap = tc.initialSnap
 			mockClient.subs = tc.initialSubs
+			ctx := t.Context()
 
-			// TODO: update to compare actual ops sent to lkClient
-			decs := Decide(tc.policy, tc.layout, tc.initialSnap)
-			ops := Diff(tc.initialSubs, decs)
+			agent.reconcileState(ctx)
 
-			if diff := cmp.Diff(tc.expectedOps, ops); diff != "" {
-				t.Errorf("unexpected subscription ops (-want +got):\n%s", diff)
+			if diff := cmp.Diff(tc.expectedSubs, mockClient.subs); diff != "" {
+				t.Errorf("unexpected subscriptions after reconciliation (-want +got):\n%s", diff)
 			}
 		})
 	}

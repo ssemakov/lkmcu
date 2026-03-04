@@ -19,7 +19,7 @@ func TestNewClient(t *testing.T) {
 	apiKey := "test-key"
 	apiSecret := "test-secret"
 
-	client := NewClient(url, apiKey, apiSecret, nil)
+	client := NewClient(url, apiKey, apiSecret, nil).(*client) // type assert to access internal fields for testing
 
 	if client == nil {
 		t.Fatal("NewClient returned nil")
@@ -59,7 +59,7 @@ func TestNewClient(t *testing.T) {
 func TestClient_Subscribe(t *testing.T) {
 	cases := []struct {
 		name      string
-		setup     func(c *Client)
+		setup     func(c *client)
 		pid       string
 		tid       string
 		subscribe bool
@@ -67,14 +67,14 @@ func TestClient_Subscribe(t *testing.T) {
 	}{
 		{
 			name:    "room is nil",
-			setup:   func(c *Client) { c.room = nil },
+			setup:   func(c *client) { c.room = nil },
 			pid:     "p1",
 			tid:     "t1",
 			wantErr: "room is not connected",
 		},
 		{
 			name: "SetSubscribed returns error",
-			setup: func(c *Client) {
+			setup: func(c *client) {
 				c.room = &lksdk.Room{}
 				c.findSubTargetFn = func(pid, tid string) (setSubscribedFn, error) {
 					return func(sub bool) error { return errors.New("fail") }, nil
@@ -86,7 +86,7 @@ func TestClient_Subscribe(t *testing.T) {
 		},
 		{
 			name: "success subscribe true",
-			setup: func(c *Client) {
+			setup: func(c *client) {
 				c.room = &lksdk.Room{}
 				c.findSubTargetFn = func(pid, tid string) (setSubscribedFn, error) {
 					return func(sub bool) error { return nil }, nil
@@ -99,7 +99,7 @@ func TestClient_Subscribe(t *testing.T) {
 		},
 		{
 			name: "success subscribe false",
-			setup: func(c *Client) {
+			setup: func(c *client) {
 				c.room = &lksdk.Room{}
 				c.findSubTargetFn = func(pid, tid string) (setSubscribedFn, error) {
 					return func(sub bool) error { return nil }, nil
@@ -114,7 +114,7 @@ func TestClient_Subscribe(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := NewClient("ws://x", "k", "s", nil)
+			c := NewClient("ws://x", "k", "s", nil).(*client)
 			tc.setup(c)
 			err := c.Subscribe(tc.pid, tc.tid, tc.subscribe)
 			if tc.wantErr == "" {
@@ -140,7 +140,7 @@ func TestClient_Close_WithoutRoom(t *testing.T) {
 }
 
 func TestClient_Close_WithRoom(t *testing.T) {
-	client := NewClient("ws://localhost:7880", "key", "secret", nil)
+	client := NewClient("ws://localhost:7880", "key", "secret", nil).(*client)
 	client.room = lksdk.NewRoom(nil)
 
 	err := client.Close()
@@ -158,7 +158,7 @@ func TestSubscriptionSnapshot_NilRoomREturnsEmpty(t *testing.T) {
 }
 
 func TestSubscriptionSnapshot_UsesListSubsSeam(t *testing.T) {
-	c := NewClient("ws://x", "k", "s", nil)
+	c := NewClient("ws://x", "k", "s", nil).(*client) // type assert to access internal fields for testing
 	fake := []*Subscription{
 		{TID: "t1", PID: "p1", Kind: "video", Source: "camera"},
 		{TID: "t2", PID: "p2", Kind: "audio", Source: "mic"},
@@ -210,8 +210,8 @@ func (f fakeRemoteTrack) ReadRTP() (*rtp.Packet, interceptor.Attributes, error) 
 	return nil, nil, nil
 }
 
-func newClient() *Client {
-	return NewClient("ws://localhost:7880", "key", "secret", nil)
+func newClient() *client {
+	return NewClient("ws://localhost:7880", "key", "secret", nil).(*client)
 }
 
 func recvOne(t *testing.T, ch <-chan Event) any {
@@ -232,50 +232,50 @@ func TestClient_EventHandling(t *testing.T) {
 
 	type testCase struct {
 		name   string
-		invoke func(c *Client)
+		invoke func(c *client)
 		want   any
 	}
 
 	cases := []testCase{
 		{
 			name:   "participant joined",
-			invoke: func(c *Client) { c.onParticipantJoined(rp) },
+			invoke: func(c *client) { c.onParticipantJoined(rp) },
 			want:   ParticipantJoined{PID: rp.sid, Identity: rp.identity},
 		},
 		{
 			name:   "participant left",
-			invoke: func(c *Client) { c.onParticipantLeft(rp) },
+			invoke: func(c *client) { c.onParticipantLeft(rp) },
 			want:   ParticipantLeft{PID: rp.sid, Identity: rp.identity},
 		},
 		{
 			name:   "track published",
-			invoke: func(c *Client) { c.onTrackPublished(pub, rp) },
+			invoke: func(c *client) { c.onTrackPublished(pub, rp) },
 			want:   TrackPublished{PID: rp.sid, Identity: rp.identity, TID: pub.sid, Kind: pub.kind.String()},
 		},
 		{
 			name:   "track unpublished",
-			invoke: func(c *Client) { c.onTrackUnpublished(pub, rp) },
+			invoke: func(c *client) { c.onTrackUnpublished(pub, rp) },
 			want:   TrackUnpublished{PID: rp.sid, Identity: rp.identity, TID: pub.sid},
 		},
 		{
 			name:   "track subscribed",
-			invoke: func(c *Client) { c.onTrackSubscribed(track, pub, rp) },
+			invoke: func(c *client) { c.onTrackSubscribed(track, pub, rp) },
 			want: TrackSubscribed{PID: rp.sid, Identity: rp.identity, TID: pub.sid, Kind: pub.kind.String(),
 				RemoteTrack: &remoteTrackAdapter{track: track}, Receiver: &receiverAdapter{receiver: nil}},
 		},
 		{
 			name:   "track unsubscribed",
-			invoke: func(c *Client) { c.onTrackUnsubscribed(track, pub, rp) },
+			invoke: func(c *client) { c.onTrackUnsubscribed(track, pub, rp) },
 			want:   TrackUnsubscribed{PID: rp.sid, Identity: rp.identity, TID: pub.sid, Kind: pub.kind.String()},
 		},
 		{
 			name:   "room reconnected",
-			invoke: func(c *Client) { c.onRoomReconnected() },
+			invoke: func(c *client) { c.onRoomReconnected() },
 			want:   RoomReconnected{},
 		},
 		{
 			name:   "room disconnected",
-			invoke: func(c *Client) { c.onRoomDisconnected(lksdk.DisconnectionReason("server_terminated")) },
+			invoke: func(c *client) { c.onRoomDisconnected(lksdk.DisconnectionReason("server_terminated")) },
 			want:   RoomDisconnected{Reason: "server_terminated"},
 		},
 	}
@@ -303,7 +303,7 @@ func TestClient_EventHandling(t *testing.T) {
 }
 
 func TestPush_DropOldest(t *testing.T) {
-	c := NewClient("ws://x", "k", "s", &EventOptions{BufferSize: 2, DropPolicy: DropOldest})
+	c := NewClient("ws://x", "k", "s", &EventOptions{BufferSize: 2, DropPolicy: DropOldest}).(*client) // type assert to access internal fields for testing
 
 	c.push(ParticipantJoined{PID: "1"})
 	c.push(ParticipantJoined{PID: "2"})
@@ -316,7 +316,7 @@ func TestPush_DropOldest(t *testing.T) {
 }
 
 func TestPush_Block(t *testing.T) {
-	c := NewClient("ws://x", "k", "s", &EventOptions{BufferSize: 1, DropPolicy: Block})
+	c := NewClient("ws://x", "k", "s", &EventOptions{BufferSize: 1, DropPolicy: Block}).(*client) // type assert to access internal fields for testing
 	c.push(ParticipantJoined{PID: "1"})
 
 	blocked := make(chan struct{})
@@ -341,7 +341,7 @@ func TestPush_Block(t *testing.T) {
 }
 
 func TestClose_BufferedEventsRemainReadable(t *testing.T) {
-	c := NewClient("ws://x", "k", "s", &EventOptions{BufferSize: 2, DropPolicy: Block})
+	c := NewClient("ws://x", "k", "s", &EventOptions{BufferSize: 2, DropPolicy: Block}).(*client) // type assert to access internal fields for testing
 
 	c.onParticipantJoined(fakeRP{sid: "1", identity: "a"})
 	c.onParticipantJoined(fakeRP{sid: "2", identity: "b"})
@@ -357,7 +357,7 @@ func TestClose_BufferedEventsRemainReadable(t *testing.T) {
 }
 
 func TestClose_NoNewEventsAfter(t *testing.T) {
-	c := NewClient("ws://x", "k", "s", &EventOptions{BufferSize: 1, DropPolicy: Block})
+	c := NewClient("ws://x", "k", "s", &EventOptions{BufferSize: 1, DropPolicy: Block}).(*client) // type assert to access internal fields for testing
 	_ = c.Close()
 
 	c.onParticipantJoined(fakeRP{sid: "3", identity: "c"})

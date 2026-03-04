@@ -18,17 +18,10 @@ type AgentConfig struct {
 	Policy Policy
 }
 
-type lkClient interface {
-	JoinRoom(roomName, identity string) error
-	Close() error
-	Events() <-chan lk.Event
-	SubscriptionSnapshot() []*lk.Subscription
-}
-
 // Agent coordinates LiveKit events and layout updates to keep subscriptions in sync.
 type Agent struct {
 	cfg AgentConfig
-	lk  lkClient
+	lk  lk.Client
 
 	layoutView *layout.LayoutView // current layout view
 	roomSnap   *RoomSnapshot      // current room state
@@ -67,8 +60,11 @@ func (a *Agent) Run(ctx context.Context) error {
 	lg.Infof("agent starting for room=%s identity=%s", a.cfg.Config.Room, a.cfg.Config.Identity)
 	lg.Infof("connecting to LiveKit at %s", a.cfg.Config.LivekitURL)
 
+	if a.lk == nil {
+		a.lk = lk.NewClient(a.cfg.Config.LivekitURL, a.cfg.Config.APIKey, a.cfg.Config.APISecret, nil)
+	}
+
 	// Join the livekit room
-	a.lk = lk.NewClient(a.cfg.Config.LivekitURL, a.cfg.Config.APIKey, a.cfg.Config.APISecret, nil)
 	if err := a.lk.JoinRoom(a.cfg.Config.Room, a.cfg.Config.Identity); err != nil {
 		lg.Fatalf("could not join room: %v", err)
 	} else {
@@ -255,7 +251,7 @@ func (a *Agent) reconcileState(ctx context.Context) {
 	for _, op := range ops {
 		a.cfg.Logger.Infof("Applying subscription change: %v", logging.FormatValue(op))
 
-		if err := op.Exec(a.lk.(*lk.Client)); err != nil {
+		if err := op.Exec(a.lk); err != nil {
 			a.cfg.Logger.Errorf("error applying subscription change: %v", err)
 		}
 	}
