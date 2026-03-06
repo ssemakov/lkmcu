@@ -3,6 +3,7 @@ package livekit
 import (
 	"time"
 
+	"github.com/pion/interceptor"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 )
@@ -13,8 +14,21 @@ type Receiver interface {
 	Stop() error
 }
 
+// Internal interface to abstract away the webrtc.RTPReceiver and allow for testing without a full LiveKit connection.
+type webRtcRtpReceiver interface {
+	ReadRTCP() ([]rtcp.Packet, interceptor.Attributes, error)
+	SetReadDeadline(t time.Time) error
+	Stop() error
+}
+
+// compile-time assertions
+var (
+	_ Receiver          = (*receiverAdapter)(nil)
+	_ webRtcRtpReceiver = (*webrtc.RTPReceiver)(nil)
+)
+
 type receiverAdapter struct {
-	receiver *webrtc.RTPReceiver
+	receiver webRtcRtpReceiver
 }
 
 func (a *receiverAdapter) ReadRTCP() ([]rtcp.Packet, error) {

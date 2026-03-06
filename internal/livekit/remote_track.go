@@ -26,7 +26,7 @@ func (a *remoteTrackAdapter) ID() string {
 }
 
 func (a *remoteTrackAdapter) Kind() string {
-	return ""
+	return a.track.Kind().String()
 }
 
 func (a *remoteTrackAdapter) ReadRTP() (*rtp.Packet, error) {

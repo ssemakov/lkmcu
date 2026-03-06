@@ -224,6 +224,7 @@ type webrtcRemoteTrack interface {
 	SetReadDeadline(time.Time) error
 	SSRC() webrtcSSRC
 	ReadRTP() (*rtp.Packet, interceptor.Attributes, error)
+	Kind() webrtc.RTPCodecType
 }
 
 type webrtcSSRC = webrtc.SSRC
@@ -252,7 +253,7 @@ func (c *client) onTrackPublished(pub remoteTrackPublication, p remoteParticipan
 }
 
 func (c *client) onTrackUnpublished(pub remoteTrackPublication, p remoteParticipant) {
-	evt := TrackUnpublished{PID: p.SID(), Identity: p.Identity(), TID: pub.SID()}
+	evt := TrackUnpublished{PID: p.SID(), Identity: p.Identity(), TID: pub.SID(), Kind: pub.Kind().String()}
 	c.push(evt)
 }
 

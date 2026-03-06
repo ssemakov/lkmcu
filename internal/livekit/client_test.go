@@ -202,8 +202,13 @@ type fakeRemoteTrack struct {
 
 func (f fakeRemoteTrack) ID() string { return f.IdVal }
 
-// func (f fakeRemoteTrack) Kind() string                    { return f.KindVal }
-// func (f fakeRemoteTrack) ReadRTP() ([]byte, error)        { return nil, nil }
+func (f fakeRemoteTrack) Kind() webrtc.RTPCodecType {
+	if f.KindVal == "audio" {
+		return webrtc.RTPCodecTypeAudio
+	}
+	return webrtc.RTPCodecTypeVideo
+}
+
 func (f fakeRemoteTrack) SSRC() webrtcSSRC                { return webrtc.SSRC(f.SsrcVal) }
 func (f fakeRemoteTrack) SetReadDeadline(time.Time) error { return nil }
 func (f fakeRemoteTrack) ReadRTP() (*rtp.Packet, interceptor.Attributes, error) {
@@ -255,7 +260,7 @@ func TestClient_EventHandling(t *testing.T) {
 		{
 			name:   "track unpublished",
 			invoke: func(c *client) { c.onTrackUnpublished(pub, rp) },
-			want:   TrackUnpublished{PID: rp.sid, Identity: rp.identity, TID: pub.sid},
+			want:   TrackUnpublished{PID: rp.sid, Identity: rp.identity, TID: pub.sid, Kind: pub.kind.String()},
 		},
 		{
 			name:   "track subscribed",
