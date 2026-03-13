@@ -361,3 +361,90 @@ func MakeStopTrackAndReceiver(
 
 	return track, receiver
 }
+
+// Track: handleRTP-path variant with controllable deadline/read errors.
+type HandleRTPTrack struct {
+	id               string
+	pkt              *rtp.Packet
+	setDeadlineErr   error
+	readErr          error
+	setDeadlineCalls int32
+	readCalls        int32
+}
+
+func NewHandleRTPTrack(
+	id string,
+	pkt *rtp.Packet,
+	setDeadlineErr error,
+	readErr error,
+) *HandleRTPTrack {
+	return &HandleRTPTrack{
+		id:             id,
+		pkt:            pkt,
+		setDeadlineErr: setDeadlineErr,
+		readErr:        readErr,
+	}
+}
+
+func (t *HandleRTPTrack) ID() string   { return t.id }
+func (t *HandleRTPTrack) Kind() string { return "video" }
+func (t *HandleRTPTrack) SSRC() uint32 { return 1234 }
+
+func (t *HandleRTPTrack) SetReadDeadline(time.Time) error {
+	atomic.AddInt32(&t.setDeadlineCalls, 1)
+	return t.setDeadlineErr
+}
+
+func (t *HandleRTPTrack) ReadRTP() (*rtp.Packet, error) {
+	atomic.AddInt32(&t.readCalls, 1)
+	return t.pkt, t.readErr
+}
+
+func (t *HandleRTPTrack) SetDeadlineCalls() int32 {
+	return atomic.LoadInt32(&t.setDeadlineCalls)
+}
+
+func (t *HandleRTPTrack) ReadCalls() int32 {
+	return atomic.LoadInt32(&t.readCalls)
+}
+
+// Receiver: handleRTCP-path variant with controllable deadline/read errors.
+type ControllableRTPReceiver struct {
+	packets          []rtcp.Packet
+	setDeadlineErr   error
+	readErr          error
+	setDeadlineCalls int32
+	readCalls        int32
+}
+
+func NewControllableRTPReceiver(
+	packets []rtcp.Packet,
+	setDeadlineErr error,
+	readErr error,
+) *ControllableRTPReceiver {
+	return &ControllableRTPReceiver{
+		packets:        packets,
+		setDeadlineErr: setDeadlineErr,
+		readErr:        readErr,
+	}
+}
+
+func (r *ControllableRTPReceiver) SetReadDeadline(time.Time) error {
+	atomic.AddInt32(&r.setDeadlineCalls, 1)
+	return r.setDeadlineErr
+}
+
+func (r *ControllableRTPReceiver) ReadRTCP() ([]rtcp.Packet, error) {
+	atomic.AddInt32(&r.readCalls, 1)
+	return r.packets, r.readErr
+}
+
+func (r *ControllableRTPReceiver) Stop() error { return nil }
+
+func (r *ControllableRTPReceiver) SetDeadlineCalls() int32 {
+	return atomic.LoadInt32(&r.setDeadlineCalls)
+}
+
+func (r *ControllableRTPReceiver) ReadCalls() int32 {
+	return atomic.LoadInt32(&r.readCalls)
+}

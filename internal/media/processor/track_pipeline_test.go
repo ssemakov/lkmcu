@@ -321,39 +321,120 @@ func TestTrackPipeline_Stop(t *testing.T) {
 	})
 }
 
-func TestTrackPipeline_HandleRTP_Stubs(t *testing.T) {
+func TestTrackPipeline_HandleRTP(t *testing.T) {
 	t.Run("deadline error", func(t *testing.T) {
-		t.Skip("TODO: verify handleRTP returns SetReadDeadline error")
+		wantErr := errors.New("set deadline failed")
+		track := testutil.NewHandleRTPTrack("t1", nil, wantErr, nil)
+		p := &trackPipeline{
+			track:  track,
+			config: TrackPipelineConfig{RTPReadDeadline: 10 * time.Millisecond},
+			logger: logging.NewNullLogger("test", "null"),
+		}
+
+		err := p.handleRTP()
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("handleRTP() error = %v, want %v", err, wantErr)
+		}
+		if got := track.ReadCalls(); got != 0 {
+			t.Fatalf("expected ReadRTP not to be called on deadline error, got %d", got)
+		}
 	})
 
 	t.Run("read error", func(t *testing.T) {
-		t.Skip("TODO: verify handleRTP returns ReadRTP error")
-	})
+		wantErr := errors.New("read rtp failed")
+		track := testutil.NewHandleRTPTrack("t1", nil, nil, wantErr)
+		p := &trackPipeline{
+			track:  track,
+			config: TrackPipelineConfig{RTPReadDeadline: 10 * time.Millisecond},
+			logger: logging.NewNullLogger("test", "null"),
+		}
 
-	t.Run("onRTP error", func(t *testing.T) {
-		t.Skip("TODO: verify handleRTP returns onRTP error")
+		err := p.handleRTP()
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("handleRTP() error = %v, want %v", err, wantErr)
+		}
+		if got := track.ReadCalls(); got != 1 {
+			t.Fatalf("expected ReadRTP to be called once, got %d", got)
+		}
 	})
 
 	t.Run("success path", func(t *testing.T) {
-		t.Skip("TODO: verify handleRTP succeeds when deadline/read/onRTP succeed")
+		track := testutil.NewHandleRTPTrack("t1", nil, nil, nil)
+		p := &trackPipeline{
+			track:  track,
+			config: TrackPipelineConfig{RTPReadDeadline: 10 * time.Millisecond},
+			logger: logging.NewNullLogger("test", "null"),
+		}
+
+		if err := p.handleRTP(); err != nil {
+			t.Fatalf("handleRTP() error = %v, want nil", err)
+		}
+		if got := track.SetDeadlineCalls(); got != 1 {
+			t.Fatalf("expected SetReadDeadline to be called once, got %d", got)
+		}
+		if got := track.ReadCalls(); got != 1 {
+			t.Fatalf("expected ReadRTP to be called once, got %d", got)
+		}
 	})
 }
 
-func TestTrackPipeline_HandleRTCP_Stubs(t *testing.T) {
+func TestTrackPipeline_HandleRTCP(t *testing.T) {
 	t.Run("deadline error", func(t *testing.T) {
-		t.Skip("TODO: verify handleRTCP returns SetReadDeadline error")
+		wantErr := errors.New("set deadline failed")
+		receiver := testutil.NewControllableRTPReceiver(nil, wantErr, nil)
+		p := &trackPipeline{
+			track:    fakeTrack{id: "t1"},
+			receiver: receiver,
+			config:   TrackPipelineConfig{RTCPReadDeadline: 10 * time.Millisecond},
+			logger:   logging.NewNullLogger("test", "null"),
+		}
+
+		err := p.handleRTCP()
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("handleRTCP() error = %v, want %v", err, wantErr)
+		}
+		if got := receiver.ReadCalls(); got != 0 {
+			t.Fatalf("expected ReadRTCP not to be called on deadline error, got %d", got)
+		}
 	})
 
 	t.Run("read error", func(t *testing.T) {
-		t.Skip("TODO: verify handleRTCP returns ReadRTCP error")
-	})
+		wantErr := errors.New("read rtcp failed")
+		receiver := testutil.NewControllableRTPReceiver(nil, nil, wantErr)
+		p := &trackPipeline{
+			track:    fakeTrack{id: "t1"},
+			receiver: receiver,
+			config:   TrackPipelineConfig{RTCPReadDeadline: 10 * time.Millisecond},
+			logger:   logging.NewNullLogger("test", "null"),
+		}
 
-	t.Run("onRTCP error", func(t *testing.T) {
-		t.Skip("TODO: verify handleRTCP returns onRTCP error")
+		err := p.handleRTCP()
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("handleRTCP() error = %v, want %v", err, wantErr)
+		}
+		if got := receiver.ReadCalls(); got != 1 {
+			t.Fatalf("expected ReadRTCP to be called once, got %d", got)
+		}
 	})
 
 	t.Run("success path", func(t *testing.T) {
-		t.Skip("TODO: verify handleRTCP succeeds when deadline/read/onRTCP succeed")
+		receiver := testutil.NewControllableRTPReceiver(nil, nil, nil)
+		p := &trackPipeline{
+			track:    fakeTrack{id: "t1"},
+			receiver: receiver,
+			config:   TrackPipelineConfig{RTCPReadDeadline: 10 * time.Millisecond},
+			logger:   logging.NewNullLogger("test", "null"),
+		}
+
+		if err := p.handleRTCP(); err != nil {
+			t.Fatalf("handleRTCP() error = %v, want nil", err)
+		}
+		if got := receiver.SetDeadlineCalls(); got != 1 {
+			t.Fatalf("expected SetReadDeadline to be called once, got %d", got)
+		}
+		if got := receiver.ReadCalls(); got != 1 {
+			t.Fatalf("expected ReadRTCP to be called once, got %d", got)
+		}
 	})
 }
 
