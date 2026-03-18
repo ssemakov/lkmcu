@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/pion/rtcp"
-	"github.com/pion/rtp"
 	"github.com/pion/transport/v3/packetio"
 	"github.com/ssemakov/lkmcu/internal/livekit"
 	"github.com/ssemakov/lkmcu/internal/logging"
 	"github.com/ssemakov/lkmcu/internal/media/clock"
 	"github.com/ssemakov/lkmcu/internal/media/jitter_buffer"
+	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
 
 // Temp interface until I figure out the RTP packet interface.
@@ -44,10 +44,12 @@ type DefaultTrackPipelineFactory struct {
 	Logger logging.Logger
 	Ctx    context.Context
 	Config TrackPipelineConfig
+	Mapper *clock.ClockMapper
+	Buffer jitter_buffer.Buffer
 }
 
 type trackPipeline struct {
-	buffer   *jitter_buffer.Buffer
+	buffer   jitter_buffer.Buffer
 	mapper   *clock.ClockMapper
 	track    livekit.RemoteTrack
 	receiver livekit.Receiver
@@ -77,8 +79,8 @@ func (f *DefaultTrackPipelineFactory) NewTrackPipeline(track livekit.RemoteTrack
 	}
 
 	return &trackPipeline{
-		buffer:   nil,
-		mapper:   nil,
+		buffer:   f.Buffer,
+		mapper:   f.Mapper,
 		track:    track,
 		receiver: receiver,
 		config:   config,
@@ -90,6 +92,7 @@ func (f *DefaultTrackPipelineFactory) NewTrackPipeline(track livekit.RemoteTrack
 }
 
 func (p *trackPipeline) Start() {
+	p.mapper.SetClockRate(p.track.SSRC(), p.track.ClockRate())
 	p.wg.Add(2)
 
 	go func() {
@@ -212,8 +215,9 @@ func (p *trackPipeline) handleRTCP() error {
 	return nil
 }
 
-func (p *trackPipeline) onRTP(*rtp.Packet) error {
+func (p *trackPipeline) onRTP(pkt packet.Packet) error {
 	p.logger.Debugf("Received RTP packet for track %s", p.track.ID())
+	p.buffer.Push(p.track.SSRC(), pkt)
 
 	return nil
 }

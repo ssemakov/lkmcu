@@ -215,6 +215,11 @@ func (f fakeRemoteTrack) ReadRTP() (*rtp.Packet, interceptor.Attributes, error) 
 	return nil, nil, nil
 }
 
+// Codec implements the Codec() method required by webrtcRemoteTrack interface.
+func (f fakeRemoteTrack) Codec() webrtc.RTPCodecParameters {
+	return webrtc.RTPCodecParameters{}
+}
+
 func newClient() *client {
 	return NewClient("ws://localhost:7880", "key", "secret", nil).(*client)
 }
@@ -282,6 +287,11 @@ func TestClient_EventHandling(t *testing.T) {
 			name:   "room disconnected",
 			invoke: func(c *client) { c.onRoomDisconnected(lksdk.DisconnectionReason("server_terminated")) },
 			want:   RoomDisconnected{Reason: "server_terminated"},
+		},
+		{
+			name:   "room closed",
+			invoke: func(c *client) { c.onRoomDisconnected(lksdk.RoomClosed) },
+			want:   RoomClosed{},
 		},
 	}
 

@@ -225,6 +225,7 @@ type webrtcRemoteTrack interface {
 	SSRC() webrtcSSRC
 	ReadRTP() (*rtp.Packet, interceptor.Attributes, error)
 	Kind() webrtc.RTPCodecType
+	Codec() webrtc.RTPCodecParameters
 }
 
 type webrtcSSRC = webrtc.SSRC

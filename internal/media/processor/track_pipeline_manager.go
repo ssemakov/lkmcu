@@ -6,6 +6,9 @@ import (
 
 	"github.com/ssemakov/lkmcu/internal/livekit"
 	"github.com/ssemakov/lkmcu/internal/logging"
+	"github.com/ssemakov/lkmcu/internal/media/clock"
+	"github.com/ssemakov/lkmcu/internal/media/jitter_buffer"
+	"github.com/ssemakov/lkmcu/internal/metrics"
 )
 
 // TrackPipelineManager manages the lifecycle of track pipelines for subscribed tracks.
@@ -19,13 +22,25 @@ type TrackPipelineManager interface {
 type trackPipelineManager struct {
 	factory   TrackPipelineFactory
 	pipelines map[string]TrackPipeline
+	buffer    jitter_buffer.Buffer
+	mapper    *clock.ClockMapper
 }
 
 // NewTrackPipelineManager creates a new instance of trackPipelineManager with the provided factory.
 // factory - A TrackPipelineFactory used to create new track pipelines.
 func NewTrackPipelineManager(l logging.Logger, ctx context.Context) TrackPipelineManager {
+	clock_mapper := clock.NewClockMapper(metrics.NewMetrics(), l, clock.DefaultClockMapperConfig())
+	// ToDo: pass onOverflowHandler
+	buffer := jitter_buffer.NewBuffer(clock_mapper, l, jitter_buffer.DefaultConfig(), nil)
+
 	return &trackPipelineManager{
-		factory:   &DefaultTrackPipelineFactory{Logger: l, Ctx: ctx, Config: DefaultTrackPipelineConfig()},
+		factory: &DefaultTrackPipelineFactory{
+			Logger: l,
+			Ctx:    ctx,
+			Config: DefaultTrackPipelineConfig(),
+			Mapper: clock_mapper,
+			Buffer: buffer,
+		},
 		pipelines: make(map[string]TrackPipeline),
 	}
 }
