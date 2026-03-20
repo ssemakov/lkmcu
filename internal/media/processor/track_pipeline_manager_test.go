@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/pion/rtcp"
-	"github.com/pion/rtp"
 	"github.com/ssemakov/lkmcu/internal/livekit"
+	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
 
 type fakeTPFactory struct {
@@ -42,8 +42,9 @@ type fakeTrack struct {
 
 func (t fakeTrack) ID() string                      { return t.id }
 func (t fakeTrack) Kind() string                    { return "video" }
-func (t fakeTrack) ReadRTP() (*rtp.Packet, error)   { return nil, nil }
+func (t fakeTrack) ReadRTP() (packet.Packet, error) { return packet.Packet{}, nil }
 func (t fakeTrack) SSRC() uint32                    { return 1234 }
+func (t fakeTrack) ClockRate() uint32               { return 90000 }
 func (t fakeTrack) SetReadDeadline(time.Time) error { return nil }
 
 type fakeReceiver struct {

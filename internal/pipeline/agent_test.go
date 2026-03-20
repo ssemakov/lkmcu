@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/pion/rtp"
 	"github.com/ssemakov/lkmcu/internal/config"
 	"github.com/ssemakov/lkmcu/internal/layout"
 	lk "github.com/ssemakov/lkmcu/internal/livekit"
 	"github.com/ssemakov/lkmcu/internal/logging"
+	"github.com/ssemakov/lkmcu/internal/media/packet"
 	"github.com/ssemakov/lkmcu/internal/media/processor"
 )
 
@@ -174,8 +174,9 @@ type fakeRemoteTrack struct {
 
 func (f fakeRemoteTrack) ID() string                      { return f.id }
 func (f fakeRemoteTrack) Kind() string                    { return f.kind }
-func (f fakeRemoteTrack) ReadRTP() (*rtp.Packet, error)   { return nil, nil }
+func (f fakeRemoteTrack) ReadRTP() (packet.Packet, error) { return packet.Packet{}, nil }
 func (f fakeRemoteTrack) SSRC() uint32                    { return f.ssrc }
+func (f fakeRemoteTrack) ClockRate() uint32               { return 90000 }
 func (f fakeRemoteTrack) SetReadDeadline(time.Time) error { return nil }
 
 type noopTrackPipelineManager struct{}

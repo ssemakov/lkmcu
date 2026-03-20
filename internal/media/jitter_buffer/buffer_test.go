@@ -7,6 +7,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/ssemakov/lkmcu/internal/logging"
 	"github.com/ssemakov/lkmcu/internal/media/clock"
+	mediaPacket "github.com/ssemakov/lkmcu/internal/media/packet"
 	"github.com/ssemakov/lkmcu/internal/metrics"
 	"github.com/ssemakov/lkmcu/internal/testutil"
 )
@@ -67,7 +68,7 @@ func TestBuffer_Push_Accepted_Before_SR(t *testing.T) {
 	buf, m := newTestBuffer(nil, nil)
 	m.SetClockRate(ssrc, clockRate)
 
-	packet := Packet{Seq: 1, PayloadTs: time.Unix(0, 50)}
+	packet := mediaPacket.Packet{Seq: 1}
 
 	status, err := buf.Push(ssrc, packet)
 
@@ -95,7 +96,7 @@ func TestBuffer_Push_Accepted_After_SR(t *testing.T) {
 	}
 
 	p1RTP := testutil.RTPAfter(clockRate, baseRTP, 50*time.Millisecond)
-	p1 := Packet{Seq: 1, RtpTs: p1RTP}
+	p1 := mediaPacket.Packet{Seq: 1, RtpTs: p1RTP}
 
 	status, err := buf.Push(ssrc, p1)
 
@@ -114,7 +115,7 @@ func TestBuffer_Push_Accepted_After_SR(t *testing.T) {
 	}
 
 	p2RTP := testutil.RTPAfter(clockRate, baseRTP, 50*time.Millisecond)
-	p2 := Packet{Seq: 2, RtpTs: p2RTP}
+	p2 := mediaPacket.Packet{Seq: 2, RtpTs: p2RTP}
 
 	status, err = buf.Push(ssrc, p2)
 
@@ -143,7 +144,7 @@ func TestBuffer_Push_Duplicate(t *testing.T) {
 	}
 
 	p1RTP := testutil.RTPAfter(clockRate, baseRTP, 50*time.Millisecond)
-	p1 := Packet{Seq: 1, RtpTs: p1RTP}
+	p1 := mediaPacket.Packet{Seq: 1, RtpTs: p1RTP}
 
 	_, err := buf.Push(ssrc, p1)
 
@@ -151,7 +152,7 @@ func TestBuffer_Push_Duplicate(t *testing.T) {
 		t.Fatalf("no error expected, got %v", err)
 	}
 
-	p2 := Packet{Seq: 1, RtpTs: p1RTP}
+	p2 := mediaPacket.Packet{Seq: 1, RtpTs: p1RTP}
 	status, err := buf.Push(ssrc, p2)
 
 	if err != nil {
@@ -179,7 +180,7 @@ func TestBuffer_Push_LateDrop(t *testing.T) {
 	}
 
 	p1RTP := testutil.RTPAfter(clockRate, baseRTP, 50*time.Millisecond)
-	p1 := Packet{Seq: 1, RtpTs: p1RTP}
+	p1 := mediaPacket.Packet{Seq: 1, RtpTs: p1RTP}
 
 	status, err := buf.Push(ssrc, p1)
 
@@ -208,7 +209,7 @@ func TestBuffer_Push_MapperDegraded(t *testing.T) {
 	}
 
 	p1RTP := testutil.RTPAfter(clockRate, baseRTP, 50*time.Millisecond)
-	p1 := Packet{Seq: 1, RtpTs: p1RTP}
+	p1 := mediaPacket.Packet{Seq: 1, RtpTs: p1RTP}
 
 	status, err := buf.Push(ssrc, p1)
 
@@ -250,7 +251,7 @@ func TestBuffer_Push_PacketsRearrangedAfterSR(t *testing.T) {
 	// d=10ms (Seq 3) -> PTS = t0 + 10ms = now - 90ms
 	for i, d := range deltas {
 		pRTP := testutil.RTPAfter(clockRate, baseRTP, d*time.Millisecond)
-		p := Packet{Seq: uint16(i), RtpTs: pRTP}
+		p := mediaPacket.Packet{Seq: uint16(i), RtpTs: pRTP}
 		buf.Push(ssrc, p)
 	}
 
@@ -270,7 +271,7 @@ func TestBuffer_Push_PacketsRearrangedAfterSR(t *testing.T) {
 
 	// push one more packet after SR to trigger recalculation
 	// PTS = t1 + 30ms = now - 70ms
-	p := Packet{Seq: 99, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 30*time.Millisecond)}
+	p := mediaPacket.Packet{Seq: 99, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 30*time.Millisecond)}
 	buf.Push(ssrc, p)
 
 	// Normalize mapper state out of the discontinuity with second SR
@@ -281,7 +282,7 @@ func TestBuffer_Push_PacketsRearrangedAfterSR(t *testing.T) {
 	}
 
 	// PTS = t2 + 35ms = now - 65ms
-	p = Packet{Seq: 100, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 35*time.Millisecond)}
+	p = mediaPacket.Packet{Seq: 100, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 35*time.Millisecond)}
 	buf.Push(ssrc, p)
 
 	now := time.Now()
@@ -311,7 +312,7 @@ func TestBuffer_Pop_HoldsPacketsUntilSRArrives(t *testing.T) {
 	baseRTP, hi, lo, _, _ := testutil.MakeSRBase(clockRate, 100*time.Millisecond)
 
 	// Push packets before any SR
-	p1 := Packet{Seq: 1, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 15*time.Millisecond)}
+	p1 := mediaPacket.Packet{Seq: 1, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 15*time.Millisecond)}
 	buf.Push(ssrc, p1)
 
 	pkt, ok := buf.Pop(ssrc, time.Now())
@@ -325,7 +326,7 @@ func TestBuffer_Pop_HoldsPacketsUntilSRArrives(t *testing.T) {
 	}
 
 	// Push another packet after SR to trigger recalculation
-	p2 := Packet{Seq: 2, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 20*time.Millisecond)}
+	p2 := mediaPacket.Packet{Seq: 2, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 20*time.Millisecond)}
 	buf.Push(ssrc, p2)
 
 	// Advance time beyond max target to allow popping (the window is now widened to 200ms as result of single SR and discontinuity)
@@ -375,7 +376,7 @@ func TestBuffer_Pop_UnderflowFreezeAndHandler(t *testing.T) {
 	}
 
 	// Push a packet
-	p1 := Packet{Seq: 1, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 10*time.Millisecond)}
+	p1 := mediaPacket.Packet{Seq: 1, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 10*time.Millisecond)}
 	buf.Push(ssrc, p1)
 
 	// Should pop normally
@@ -438,7 +439,7 @@ func TestBuffer_Occupancy_Report(t *testing.T) {
 	// Push packets
 	numPackets := 5
 	for i := 0; i < numPackets; i++ {
-		p := Packet{Seq: uint16(i), RtpTs: testutil.RTPAfter(clockRate, baseRTP, time.Duration(i)*10*time.Millisecond)}
+		p := mediaPacket.Packet{Seq: uint16(i), RtpTs: testutil.RTPAfter(clockRate, baseRTP, time.Duration(i)*10*time.Millisecond)}
 		buf.Push(ssrc, p)
 	}
 
@@ -479,7 +480,7 @@ func TestBuffer_Target_NominalAndPerSSRC(t *testing.T) {
 		t.Fatalf("want nominal Target %v, got %v", buf.Config().Target, nom)
 	}
 
-	p := Packet{Seq: 1, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 10*time.Millisecond)}
+	p := mediaPacket.Packet{Seq: 1, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 10*time.Millisecond)}
 	buf.Push(ssrc, p)
 
 	// After first SR mapper is degraded, so target should be MaxTarget
@@ -493,7 +494,7 @@ func TestBuffer_Target_NominalAndPerSSRC(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p = Packet{Seq: 2, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 20*time.Millisecond)}
+	p = mediaPacket.Packet{Seq: 2, RtpTs: testutil.RTPAfter(clockRate, baseRTP, 20*time.Millisecond)}
 	buf.Push(ssrc, p)
 
 	// After second SR mapper is normalized, so target should be nominal
@@ -512,14 +513,14 @@ func TestSSRCBuffer_UpdateOccupancy(t *testing.T) {
 		t.Fatalf("expected occupancy 0 for empty heap, got %v", sb.occupy)
 	}
 
-	sb.heap.PushPacket(&Packet{PayloadTs: base.Add(10 * time.Millisecond), Seq: 2})
+	sb.heap.PushPacket(&timedPacket{Packet: mediaPacket.Packet{Seq: 2}, PayloadTs: base.Add(10 * time.Millisecond)})
 	sb.updateOccupancy()
 	if sb.occupy != 0 {
 		t.Fatalf("expected occupancy 0 for single packet, got %v", sb.occupy)
 	}
 
-	sb.heap.PushPacket(&Packet{PayloadTs: base.Add(0), Seq: 10})
-	sb.heap.PushPacket(&Packet{PayloadTs: base.Add(20 * time.Millisecond), Seq: 1})
+	sb.heap.PushPacket(&timedPacket{Packet: mediaPacket.Packet{Seq: 10}, PayloadTs: base.Add(0)})
+	sb.heap.PushPacket(&timedPacket{Packet: mediaPacket.Packet{Seq: 1}, PayloadTs: base.Add(20 * time.Millisecond)})
 	sb.updateOccupancy()
 
 	expected := 20 * time.Millisecond
@@ -573,7 +574,7 @@ func TestBuffer_DropsOldest_OverMaxTarget(t *testing.T) {
 	numPackets := 5
 	// push 5 packets 10ms apart, total occupancy 40ms > 30ms target
 	for i := 0; i < numPackets; i++ {
-		p := Packet{
+		p := mediaPacket.Packet{
 			Seq:   uint16(i),
 			RtpTs: testutil.RTPAfter(clockRate, baseRTP, time.Duration(i)*10*time.Millisecond),
 		}
@@ -625,7 +626,7 @@ func TestBuffer_Push_MaxReorderDepthCap(t *testing.T) {
 	// Expect 2 packets to be dropped when pushing total of MaxReorderDepth + 2 packets
 	total := cfg.MaxReorderDepth + 2
 	for i := 0; i < total; i++ {
-		if _, err := buf.Push(ssrc, Packet{Seq: uint16(i)}); err != nil {
+		if _, err := buf.Push(ssrc, mediaPacket.Packet{Seq: uint16(i)}); err != nil {
 			t.Fatalf("Push %d returned error: %v", i, err)
 		}
 	}
@@ -680,7 +681,7 @@ func TestBuffer_RecalculatePts_DedupLateAndTrimming(t *testing.T) {
 		baseRTP, hi, lo, _, _ := testutil.MakeSRBase(clockRate, 200*time.Millisecond)
 		for _, p := range pushes {
 			rtp := testutil.RTPAfter(clockRate, baseRTP, p.delta)
-			if _, err := buf.Push(ssrc, Packet{Seq: p.seq, RtpTs: rtp}); err != nil {
+			if _, err := buf.Push(ssrc, mediaPacket.Packet{Seq: p.seq, RtpTs: rtp}); err != nil {
 				t.Fatalf("push seq %d: %v", p.seq, err)
 			}
 		}

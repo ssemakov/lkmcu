@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/pion/rtcp"
-	"github.com/pion/rtp"
 	"github.com/ssemakov/lkmcu/internal/livekit"
+	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
 
 type TestTrack int
@@ -61,10 +61,11 @@ type timeoutRTPTrack struct {
 func (t *timeoutRTPTrack) ID() string                      { return t.id }
 func (t *timeoutRTPTrack) Kind() string                    { return "video" }
 func (t *timeoutRTPTrack) SSRC() uint32                    { return 1234 }
+func (t *timeoutRTPTrack) ClockRate() uint32               { return 90000 }
 func (t *timeoutRTPTrack) SetReadDeadline(time.Time) error { return nil }
-func (t *timeoutRTPTrack) ReadRTP() (*rtp.Packet, error) {
+func (t *timeoutRTPTrack) ReadRTP() (packet.Packet, error) {
 	atomic.AddInt32(&t.readCalled, 1)
-	return nil, timeoutNetError{}
+	return packet.Packet{}, timeoutNetError{}
 }
 
 func (t *timeoutRTPTrack) ReadCalls() int32 {
@@ -81,10 +82,11 @@ type errorRTPTrack struct {
 func (t *errorRTPTrack) ID() string                      { return t.id }
 func (t *errorRTPTrack) Kind() string                    { return "video" }
 func (t *errorRTPTrack) SSRC() uint32                    { return 1234 }
+func (t *errorRTPTrack) ClockRate() uint32               { return 90000 }
 func (t *errorRTPTrack) SetReadDeadline(time.Time) error { return nil }
-func (t *errorRTPTrack) ReadRTP() (*rtp.Packet, error) {
+func (t *errorRTPTrack) ReadRTP() (packet.Packet, error) {
 	atomic.AddInt32(&t.readCalled, 1)
-	return nil, t.readErr
+	return packet.Packet{}, t.readErr
 }
 
 func (t *errorRTPTrack) ReadCalls() int32 {
@@ -115,9 +117,10 @@ func newStopTrack(id string, unblockOnStopDeadline bool) *StopTrack {
 	}
 }
 
-func (t *StopTrack) ID() string   { return t.id }
-func (t *StopTrack) Kind() string { return "video" }
-func (t *StopTrack) SSRC() uint32 { return 1234 }
+func (t *StopTrack) ID() string        { return t.id }
+func (t *StopTrack) Kind() string      { return "video" }
+func (t *StopTrack) SSRC() uint32      { return 1234 }
+func (t *StopTrack) ClockRate() uint32 { return 90000 }
 
 func (t *StopTrack) SetReadDeadline(deadline time.Time) error {
 	if isStopDeadline(deadline) {
@@ -130,12 +133,12 @@ func (t *StopTrack) SetReadDeadline(deadline time.Time) error {
 	return nil
 }
 
-func (t *StopTrack) ReadRTP() (*rtp.Packet, error) {
+func (t *StopTrack) ReadRTP() (packet.Packet, error) {
 	atomic.AddInt32(&t.readCalled, 1)
 	t.readStartedOnce.Do(func() { close(t.readStarted) })
 	<-t.releaseCh
 	t.readReturnedOnce.Do(func() { close(t.readReturned) })
-	return nil, context.Canceled
+	return packet.Packet{}, context.Canceled
 }
 
 func (t *StopTrack) ReadCalls() int32 {
@@ -365,7 +368,7 @@ func MakeStopTrackAndReceiver(
 // Track: handleRTP-path variant with controllable deadline/read errors.
 type HandleRTPTrack struct {
 	id               string
-	pkt              *rtp.Packet
+	pkt              packet.Packet
 	setDeadlineErr   error
 	readErr          error
 	setDeadlineCalls int32
@@ -374,7 +377,7 @@ type HandleRTPTrack struct {
 
 func NewHandleRTPTrack(
 	id string,
-	pkt *rtp.Packet,
+	pkt packet.Packet,
 	setDeadlineErr error,
 	readErr error,
 ) *HandleRTPTrack {
@@ -386,16 +389,17 @@ func NewHandleRTPTrack(
 	}
 }
 
-func (t *HandleRTPTrack) ID() string   { return t.id }
-func (t *HandleRTPTrack) Kind() string { return "video" }
-func (t *HandleRTPTrack) SSRC() uint32 { return 1234 }
+func (t *HandleRTPTrack) ID() string        { return t.id }
+func (t *HandleRTPTrack) Kind() string      { return "video" }
+func (t *HandleRTPTrack) SSRC() uint32      { return 1234 }
+func (t *HandleRTPTrack) ClockRate() uint32 { return 90000 }
 
 func (t *HandleRTPTrack) SetReadDeadline(time.Time) error {
 	atomic.AddInt32(&t.setDeadlineCalls, 1)
 	return t.setDeadlineErr
 }
 
-func (t *HandleRTPTrack) ReadRTP() (*rtp.Packet, error) {
+func (t *HandleRTPTrack) ReadRTP() (packet.Packet, error) {
 	atomic.AddInt32(&t.readCalls, 1)
 	return t.pkt, t.readErr
 }

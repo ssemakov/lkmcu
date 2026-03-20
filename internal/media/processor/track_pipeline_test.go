@@ -7,8 +7,28 @@ import (
 	"time"
 
 	"github.com/ssemakov/lkmcu/internal/logging"
+	"github.com/ssemakov/lkmcu/internal/media/clock"
+	"github.com/ssemakov/lkmcu/internal/media/jitter_buffer"
+	"github.com/ssemakov/lkmcu/internal/media/packet"
+	"github.com/ssemakov/lkmcu/internal/metrics"
 	"github.com/ssemakov/lkmcu/internal/testutil"
 )
+
+type noopBuffer struct{}
+
+func (noopBuffer) Push(uint32, packet.Packet) (jitter_buffer.Status, error) {
+	return jitter_buffer.StatusAccepted, nil
+}
+
+func (noopBuffer) Pop(uint32, time.Time) (packet.Packet, bool) { return packet.Packet{}, false }
+func (noopBuffer) Occupancy(uint32) time.Duration              { return 0 }
+func (noopBuffer) Target(uint32) time.Duration                 { return 0 }
+func (noopBuffer) Config() *jitter_buffer.Config               { return jitter_buffer.DefaultConfig() }
+
+func newTestMapper() *clock.ClockMapper {
+	logger := logging.NewNullLogger("test", "null")
+	return clock.NewClockMapper(metrics.NewMetrics(), logger, clock.DefaultClockMapperConfig())
+}
 
 func TestDefaultTrackPipelineFactory_NewTrackPipeline_CtxNilError(t *testing.T) {
 	factory := &DefaultTrackPipelineFactory{
@@ -71,6 +91,8 @@ func TestTrackPipeline_StartLoops(t *testing.T) {
 			Ctx:    ctx,
 			Config: DefaultTrackPipelineConfig(),
 			Logger: logging.NewNullLogger("test", "null"),
+			Mapper: newTestMapper(),
+			Buffer: noopBuffer{},
 		}
 		p, err := factory.NewTrackPipeline(track, receiver)
 		if err != nil {
@@ -97,6 +119,8 @@ func TestTrackPipeline_StartLoops(t *testing.T) {
 			Ctx:    ctx,
 			Config: DefaultTrackPipelineConfig(),
 			Logger: logging.NewNullLogger("test", "null"),
+			Mapper: newTestMapper(),
+			Buffer: noopBuffer{},
 		}
 		p, err := factory.NewTrackPipeline(track, receiver)
 		if err != nil {
@@ -146,6 +170,8 @@ func TestTrackPipeline_StartLoops(t *testing.T) {
 					Ctx:    context.Background(),
 					Config: DefaultTrackPipelineConfig(),
 					Logger: logging.NewNullLogger("test", "null"),
+					Mapper: newTestMapper(),
+					Buffer: noopBuffer{},
 				}
 
 				p, err := factory.NewTrackPipeline(track, receiver)
@@ -186,6 +212,8 @@ func TestTrackPipeline_StartLoops(t *testing.T) {
 			Ctx:    context.Background(),
 			Config: DefaultTrackPipelineConfig(),
 			Logger: logging.NewNullLogger("test", "null"),
+			Mapper: newTestMapper(),
+			Buffer: noopBuffer{},
 		}
 
 		p, err := factory.NewTrackPipeline(track, receiver)
@@ -224,6 +252,8 @@ func TestTrackPipeline_Stop(t *testing.T) {
 				RTCPReadDeadline: 10 * time.Second,
 			},
 			Logger: logging.NewNullLogger("test", "null"),
+			Mapper: newTestMapper(),
+			Buffer: noopBuffer{},
 		}
 
 		p, err := factory.NewTrackPipeline(track, receiver)
@@ -280,6 +310,8 @@ func TestTrackPipeline_Stop(t *testing.T) {
 				RTCPReadDeadline: 10 * time.Second,
 			},
 			Logger: logging.NewNullLogger("test", "null"),
+			Mapper: newTestMapper(),
+			Buffer: noopBuffer{},
 		}
 
 		p, err := factory.NewTrackPipeline(track, receiver)
@@ -324,9 +356,10 @@ func TestTrackPipeline_Stop(t *testing.T) {
 func TestTrackPipeline_HandleRTP(t *testing.T) {
 	t.Run("deadline error", func(t *testing.T) {
 		wantErr := errors.New("set deadline failed")
-		track := testutil.NewHandleRTPTrack("t1", nil, wantErr, nil)
+		track := testutil.NewHandleRTPTrack("t1", packet.Packet{}, wantErr, nil)
 		p := &trackPipeline{
 			track:  track,
+			buffer: noopBuffer{},
 			config: TrackPipelineConfig{RTPReadDeadline: 10 * time.Millisecond},
 			logger: logging.NewNullLogger("test", "null"),
 		}
@@ -342,9 +375,10 @@ func TestTrackPipeline_HandleRTP(t *testing.T) {
 
 	t.Run("read error", func(t *testing.T) {
 		wantErr := errors.New("read rtp failed")
-		track := testutil.NewHandleRTPTrack("t1", nil, nil, wantErr)
+		track := testutil.NewHandleRTPTrack("t1", packet.Packet{}, nil, wantErr)
 		p := &trackPipeline{
 			track:  track,
+			buffer: noopBuffer{},
 			config: TrackPipelineConfig{RTPReadDeadline: 10 * time.Millisecond},
 			logger: logging.NewNullLogger("test", "null"),
 		}
@@ -359,9 +393,10 @@ func TestTrackPipeline_HandleRTP(t *testing.T) {
 	})
 
 	t.Run("success path", func(t *testing.T) {
-		track := testutil.NewHandleRTPTrack("t1", nil, nil, nil)
+		track := testutil.NewHandleRTPTrack("t1", packet.Packet{}, nil, nil)
 		p := &trackPipeline{
 			track:  track,
+			buffer: noopBuffer{},
 			config: TrackPipelineConfig{RTPReadDeadline: 10 * time.Millisecond},
 			logger: logging.NewNullLogger("test", "null"),
 		}

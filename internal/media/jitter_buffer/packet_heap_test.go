@@ -4,6 +4,8 @@ import (
 	"container/heap"
 	"testing"
 	"time"
+
+	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
 
 func newPacketHeap() *PacketHeap {
@@ -14,9 +16,9 @@ func newPacketHeap() *PacketHeap {
 }
 
 func TestPacketHeap(t *testing.T) {
-	p1 := &Packet{Seq: 1, PayloadTs: time.Unix(0, 1000)}
-	p2 := &Packet{Seq: 2, PayloadTs: time.Unix(0, 500)}
-	p3 := &Packet{Seq: 3, PayloadTs: time.Unix(0, 1500)}
+	p1 := &timedPacket{Packet: packet.Packet{Seq: 1}, PayloadTs: time.Unix(0, 1000)}
+	p2 := &timedPacket{Packet: packet.Packet{Seq: 2}, PayloadTs: time.Unix(0, 500)}
+	p3 := &timedPacket{Packet: packet.Packet{Seq: 3}, PayloadTs: time.Unix(0, 1500)}
 
 	ph := newPacketHeap()
 	ph.PushPacket(p1)
@@ -47,8 +49,8 @@ func TestPacketHeap(t *testing.T) {
 }
 
 func TestPacketHeap_PeekPacket(t *testing.T) {
-	p1 := &Packet{Seq: 1, PayloadTs: time.Unix(0, 1000)}
-	p2 := &Packet{Seq: 2, PayloadTs: time.Unix(0, 500)}
+	p1 := &timedPacket{Packet: packet.Packet{Seq: 1}, PayloadTs: time.Unix(0, 1000)}
+	p2 := &timedPacket{Packet: packet.Packet{Seq: 2}, PayloadTs: time.Unix(0, 500)}
 
 	ph := newPacketHeap()
 	ph.PushPacket(p1)
@@ -69,9 +71,9 @@ func TestPacketHeap_PeekPacket(t *testing.T) {
 }
 
 func TestPacketHeap_PeekMaxPacket(t *testing.T) {
-	p1 := &Packet{Seq: 1, PayloadTs: time.Unix(0, 1000)}
-	p2 := &Packet{Seq: 2, PayloadTs: time.Unix(0, 500)}
-	p3 := &Packet{Seq: 3, PayloadTs: time.Unix(0, 2000)}
+	p1 := &timedPacket{Packet: packet.Packet{Seq: 1}, PayloadTs: time.Unix(0, 1000)}
+	p2 := &timedPacket{Packet: packet.Packet{Seq: 2}, PayloadTs: time.Unix(0, 500)}
+	p3 := &timedPacket{Packet: packet.Packet{Seq: 3}, PayloadTs: time.Unix(0, 2000)}
 
 	ph := newPacketHeap()
 	ph.PushPacket(p1)
@@ -98,9 +100,9 @@ func TestPacketHeap_PeekMaxPacket(t *testing.T) {
 }
 
 func TestPacketHeap_EqualTimestamps(t *testing.T) {
-	p1 := &Packet{Seq: 1, PayloadTs: time.Unix(0, 1000)}
-	p2 := &Packet{Seq: 2, PayloadTs: time.Unix(0, 1000)}
-	p3 := &Packet{Seq: 3, PayloadTs: time.Unix(0, 1000)}
+	p1 := &timedPacket{Packet: packet.Packet{Seq: 1}, PayloadTs: time.Unix(0, 1000)}
+	p2 := &timedPacket{Packet: packet.Packet{Seq: 2}, PayloadTs: time.Unix(0, 1000)}
+	p3 := &timedPacket{Packet: packet.Packet{Seq: 3}, PayloadTs: time.Unix(0, 1000)}
 
 	ph := newPacketHeap()
 	ph.PushPacket(p2)

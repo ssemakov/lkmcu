@@ -1,6 +1,7 @@
 package livekit
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/pion/interceptor"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
+	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
 
 type fakeWebrtcRemoteTrack struct {
@@ -48,6 +50,10 @@ func (f *fakeWebrtcRemoteTrack) Kind() webrtc.RTPCodecType {
 	return f.kind
 }
 
+func (f *fakeWebrtcRemoteTrack) Codec() webrtc.RTPCodecParameters {
+	return webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{ClockRate: 90000}}
+}
+
 func TestRemoteTrackAdapter_ID(t *testing.T) {
 	fake := &fakeWebrtcRemoteTrack{id: "track-123"}
 	a := &remoteTrackAdapter{track: fake}
@@ -69,7 +75,7 @@ func TestRemoteTrackAdapter_Kind(t *testing.T) {
 }
 
 func TestRemoteTrackAdapter_ReadRTP_Delegates(t *testing.T) {
-	wantPkt := &rtp.Packet{
+	srcPkt := &rtp.Packet{
 		Header: rtp.Header{
 			Version:        2,
 			SequenceNumber: 42,
@@ -78,8 +84,13 @@ func TestRemoteTrackAdapter_ReadRTP_Delegates(t *testing.T) {
 		},
 		Payload: []byte{0x1, 0x2, 0x3},
 	}
+	wantPkt := packet.Packet{
+		Seq:     42,
+		RtpTs:   1234,
+		Payload: []byte{0x1, 0x2, 0x3},
+	}
 	fake := &fakeWebrtcRemoteTrack{
-		readRTPPacket: wantPkt,
+		readRTPPacket: srcPkt,
 		readRTPAttrs:  interceptor.Attributes{"x-test": "ignored"},
 	}
 	a := &remoteTrackAdapter{track: fake}
@@ -91,7 +102,7 @@ func TestRemoteTrackAdapter_ReadRTP_Delegates(t *testing.T) {
 	if fake.readRTPCalled != 1 {
 		t.Fatalf("expected ReadRTP to be called once, got %d", fake.readRTPCalled)
 	}
-	if got != wantPkt {
+	if got.Seq != wantPkt.Seq || got.RtpTs != wantPkt.RtpTs || !bytes.Equal(got.Payload, wantPkt.Payload) {
 		t.Fatalf("packet mismatch: want %#v, got %#v", wantPkt, got)
 	}
 }
@@ -105,8 +116,8 @@ func TestRemoteTrackAdapter_ReadRTP_PropagatesError(t *testing.T) {
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("expected error %v, got %v", wantErr, err)
 	}
-	if got != nil {
-		t.Fatalf("expected nil packet on error, got %#v", got)
+	if got.Seq != 0 || got.RtpTs != 0 || len(got.Payload) != 0 {
+		t.Fatalf("expected zero packet on error, got %#v", got)
 	}
 }
 
