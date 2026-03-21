@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pion/rtcp"
 	"github.com/ssemakov/lkmcu/internal/livekit"
 	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
@@ -50,7 +49,9 @@ func (t fakeTrack) SetReadDeadline(time.Time) error { return nil }
 type fakeReceiver struct {
 }
 
-func (r fakeReceiver) ReadRTCP() ([]rtcp.Packet, error)  { return nil, nil }
+func (r fakeReceiver) ReadSenderReports() ([]packet.SenderReport, error) {
+	return nil, nil
+}
 func (r fakeReceiver) SetReadDeadline(t time.Time) error { return nil }
 func (r fakeReceiver) Stop() error                       { return nil }
 

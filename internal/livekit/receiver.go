@@ -34,6 +34,10 @@ type receiverAdapter struct {
 }
 
 func (a *receiverAdapter) ReadSenderReports() ([]packet.SenderReport, error) {
+	if a.receiver == nil {
+		return nil, nil
+	}
+
 	pkts, _, err := a.receiver.ReadRTCP()
 	if err != nil {
 		return nil, err

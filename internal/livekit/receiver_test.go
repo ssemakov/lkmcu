@@ -8,6 +8,7 @@ import (
 
 	"github.com/pion/interceptor"
 	"github.com/pion/rtcp"
+	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
 
 type fakeWebRtcRtpReceiver struct {
@@ -40,30 +41,36 @@ func (f *fakeWebRtcRtpReceiver) Stop() error {
 	return f.stopErr
 }
 
-func TestReceiverAdapter_ReadRTCP_NilReceiver(t *testing.T) {
+func TestReceiverAdapter_ReadSenderReports_NilReceiver(t *testing.T) {
 	a := &receiverAdapter{receiver: nil}
 
-	got, err := a.ReadRTCP()
+	got, err := a.ReadSenderReports()
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
 	if got != nil {
-		t.Fatalf("expected nil packets, got %#v", got)
+		t.Fatalf("expected nil sender reports, got %#v", got)
 	}
 }
 
-func TestReceiverAdapter_ReadRTCP_Delegates(t *testing.T) {
-	want := []rtcp.Packet{
+func TestReceiverAdapter_ReadSenderReports_Delegates(t *testing.T) {
+	want := []packet.SenderReport{
+		{RtpTs: 1111, NtpHigh: 0x01020304, NtpLow: 0x05060708},
+		{RtpTs: 2222, NtpHigh: 0xaabbccdd, NtpLow: 0xeeff0011},
+	}
+	fakePackets := []rtcp.Packet{
 		&rtcp.PictureLossIndication{MediaSSRC: 1234},
+		&rtcp.SenderReport{RTPTime: 1111, NTPTime: 0x0102030405060708},
 		&rtcp.TransportLayerNack{MediaSSRC: 4321},
+		&rtcp.SenderReport{RTPTime: 2222, NTPTime: 0xaabbccddeeff0011},
 	}
 	fake := &fakeWebRtcRtpReceiver{
-		readRTCPPackets: want,
+		readRTCPPackets: fakePackets,
 		readRTCPAttrs:   interceptor.Attributes{"x-test": "ignored"},
 	}
 	a := &receiverAdapter{receiver: fake}
 
-	got, err := a.ReadRTCP()
+	got, err := a.ReadSenderReports()
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -75,17 +82,17 @@ func TestReceiverAdapter_ReadRTCP_Delegates(t *testing.T) {
 	}
 }
 
-func TestReceiverAdapter_ReadRTCP_PropagatesError(t *testing.T) {
+func TestReceiverAdapter_ReadSenderReports_PropagatesError(t *testing.T) {
 	wantErr := errors.New("read failed")
 	fake := &fakeWebRtcRtpReceiver{readRTCPErr: wantErr}
 	a := &receiverAdapter{receiver: fake}
 
-	got, err := a.ReadRTCP()
+	got, err := a.ReadSenderReports()
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("expected error %v, got %v", wantErr, err)
 	}
 	if got != nil {
-		t.Fatalf("expected nil packets on error, got %#v", got)
+		t.Fatalf("expected nil sender reports on error, got %#v", got)
 	}
 }
 

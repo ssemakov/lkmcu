@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pion/rtcp"
 	"github.com/ssemakov/lkmcu/internal/livekit"
 	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
@@ -166,7 +165,7 @@ type eofReceiver struct {
 	readCalled int32
 }
 
-func (r *eofReceiver) ReadRTCP() ([]rtcp.Packet, error) {
+func (r *eofReceiver) ReadSenderReports() ([]packet.SenderReport, error) {
 	atomic.AddInt32(&r.readCalled, 1)
 	return nil, io.EOF
 }
@@ -182,7 +181,7 @@ type timeoutReceiver struct {
 	readCalled int32
 }
 
-func (r *timeoutReceiver) ReadRTCP() ([]rtcp.Packet, error) {
+func (r *timeoutReceiver) ReadSenderReports() ([]packet.SenderReport, error) {
 	atomic.AddInt32(&r.readCalled, 1)
 	return nil, timeoutNetError{}
 }
@@ -199,7 +198,7 @@ type errorReceiver struct {
 	readCalled int32
 }
 
-func (r *errorReceiver) ReadRTCP() ([]rtcp.Packet, error) {
+func (r *errorReceiver) ReadSenderReports() ([]packet.SenderReport, error) {
 	atomic.AddInt32(&r.readCalled, 1)
 	return nil, r.readErr
 }
@@ -236,7 +235,7 @@ func newStopReceiver(unblockOnStopDeadline bool) *StopReceiver {
 	}
 }
 
-func (r *StopReceiver) ReadRTCP() ([]rtcp.Packet, error) {
+func (r *StopReceiver) ReadSenderReports() ([]packet.SenderReport, error) {
 	atomic.AddInt32(&r.readCalled, 1)
 	r.readStartedOnce.Do(func() { close(r.readStarted) })
 	<-r.releaseCh
@@ -414,7 +413,7 @@ func (t *HandleRTPTrack) ReadCalls() int32 {
 
 // Receiver: handleRTCP-path variant with controllable deadline/read errors.
 type ControllableRTPReceiver struct {
-	packets          []rtcp.Packet
+	reports          []packet.SenderReport
 	setDeadlineErr   error
 	readErr          error
 	setDeadlineCalls int32
@@ -422,12 +421,12 @@ type ControllableRTPReceiver struct {
 }
 
 func NewControllableRTPReceiver(
-	packets []rtcp.Packet,
+	reports []packet.SenderReport,
 	setDeadlineErr error,
 	readErr error,
 ) *ControllableRTPReceiver {
 	return &ControllableRTPReceiver{
-		packets:        packets,
+		reports:        reports,
 		setDeadlineErr: setDeadlineErr,
 		readErr:        readErr,
 	}
@@ -438,9 +437,9 @@ func (r *ControllableRTPReceiver) SetReadDeadline(time.Time) error {
 	return r.setDeadlineErr
 }
 
-func (r *ControllableRTPReceiver) ReadRTCP() ([]rtcp.Packet, error) {
+func (r *ControllableRTPReceiver) ReadSenderReports() ([]packet.SenderReport, error) {
 	atomic.AddInt32(&r.readCalls, 1)
-	return r.packets, r.readErr
+	return r.reports, r.readErr
 }
 
 func (r *ControllableRTPReceiver) Stop() error { return nil }
