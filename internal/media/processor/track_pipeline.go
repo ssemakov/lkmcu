@@ -216,7 +216,10 @@ func (p *trackPipeline) handleRTCP() error {
 
 func (p *trackPipeline) onRTP(pkt packet.Packet) error {
 	status, err := p.buffer.Push(p.track.SSRC(), pkt)
-	p.logger.Debugf("Pushed RTP packet to the buffer with status %v", status)
+
+	if status != jitter_buffer.StatusAccepted {
+		p.logger.Infof("RTP packet was not accepted by the buffer, status: %v", jitter_buffer.StatusString(status))
+	}
 
 	if err != nil {
 		return err
@@ -229,9 +232,6 @@ func (p *trackPipeline) onSR(reports []packet.SenderReport) error {
 	for _, sr := range reports {
 		err := p.mapper.UpdateFromSR(p.track.SSRC(), sr.RtpTs, sr.NtpHigh, sr.NtpLow)
 		if err != nil {
-			p.logger.Debugf("Updated clock mapper for track %s with SR: RTP TS=%d, NTP High=%d, NTP Low=%d", p.track.ID(),
-				sr.RtpTs, sr.NtpHigh, sr.NtpLow)
-		} else {
 			p.logger.Errorf("Failed to update clock mapper for track %s with SR: RTP TS=%d, NTP High=%d, NTP Low=%d, error: %v",
 				p.track.ID(), sr.RtpTs, sr.NtpHigh, sr.NtpLow, err)
 		}
