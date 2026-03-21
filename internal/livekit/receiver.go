@@ -6,10 +6,12 @@ import (
 	"github.com/pion/interceptor"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
+	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
 
 type Receiver interface {
-	ReadRTCP() ([]rtcp.Packet, error)
+	// ReadRTCP() ([]rtcp.Packet, error)
+	ReadSenderReports() ([]packet.SenderReport, error)
 	SetReadDeadline(t time.Time) error
 	Stop() error
 }
@@ -31,17 +33,22 @@ type receiverAdapter struct {
 	receiver webRtcRtpReceiver
 }
 
-func (a *receiverAdapter) ReadRTCP() ([]rtcp.Packet, error) {
-	if a.receiver == nil {
-		return nil, nil
-	}
-
-	rtcp, _, err := a.receiver.ReadRTCP()
+func (a *receiverAdapter) ReadSenderReports() ([]packet.SenderReport, error) {
+	pkts, _, err := a.receiver.ReadRTCP()
 	if err != nil {
 		return nil, err
 	}
 
-	return rtcp, nil
+	reports := make([]packet.SenderReport, 0)
+	for _, pkt := range pkts {
+		sr, ok := pkt.(*rtcp.SenderReport)
+		if !ok {
+			continue
+		}
+		reports = append(reports, packet.FromRtcpSR(*sr))
+	}
+
+	return reports, nil
 }
 
 func (a *receiverAdapter) SetReadDeadline(t time.Time) error {

@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pion/rtcp"
 	"github.com/pion/transport/v3/packetio"
 	"github.com/ssemakov/lkmcu/internal/livekit"
 	"github.com/ssemakov/lkmcu/internal/logging"
@@ -202,12 +201,12 @@ func (p *trackPipeline) handleRTCP() error {
 		return err
 	}
 
-	pkts, err := p.receiver.ReadRTCP()
+	reports, err := p.receiver.ReadSenderReports()
 	if err != nil {
 		return err
 	}
 
-	err = p.onRTCP(pkts)
+	err = p.onSR(reports)
 	if err != nil {
 		return err
 	}
@@ -216,14 +215,27 @@ func (p *trackPipeline) handleRTCP() error {
 }
 
 func (p *trackPipeline) onRTP(pkt packet.Packet) error {
-	p.logger.Debugf("Received RTP packet for track %s", p.track.ID())
-	p.buffer.Push(p.track.SSRC(), pkt)
+	status, err := p.buffer.Push(p.track.SSRC(), pkt)
+	p.logger.Debugf("Pushed RTP packet to the buffer with status %v", status)
+
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
 
-func (p *trackPipeline) onRTCP(packets []rtcp.Packet) error {
-	p.logger.Debugf("Received RTCP packets for track %s: %v", p.track.ID(), packets)
+func (p *trackPipeline) onSR(reports []packet.SenderReport) error {
+	for _, sr := range reports {
+		err := p.mapper.UpdateFromSR(p.track.SSRC(), sr.RtpTs, sr.NtpHigh, sr.NtpLow)
+		if err != nil {
+			p.logger.Debugf("Updated clock mapper for track %s with SR: RTP TS=%d, NTP High=%d, NTP Low=%d", p.track.ID(),
+				sr.RtpTs, sr.NtpHigh, sr.NtpLow)
+		} else {
+			p.logger.Errorf("Failed to update clock mapper for track %s with SR: RTP TS=%d, NTP High=%d, NTP Low=%d, error: %v",
+				p.track.ID(), sr.RtpTs, sr.NtpHigh, sr.NtpLow, err)
+		}
+	}
 
 	return nil
 }
