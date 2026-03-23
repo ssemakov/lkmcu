@@ -30,9 +30,10 @@ RTP packets rarely arrive in perfect order or timing. The jitter buffer handles 
 1. Ingress: Each packet is pushed into the buffer (`Push(packet)`).
 2. Ordering: Packets are sorted by their NTP-derived timestamp, not arrival time.
 3. Latency Window: Packets are held for ~80–120 ms to allow for reordering and delay variance.
-4. Playout: When `Pop(target_time)` is called (aligned to MCU master clock), the next frame’s worth of packets are released to the decoder.
+4. Playout: Media-specific playout loops run on the MCU master clock. The audio loop ticks at a fixed render cadence (for example, every 10 ms) and calls `Pop(now)` for each active audio SSRC, draining all packets that are ready at that playout cursor. The video path follows the same model with its own frame cadence and frame assembly rules.
+5. Handoff: Released packets continue into the media-specific decode chain. For audio, ready RTP packets flow into an audio depacketizer, then into the decoder, which produces one fixed PCM block for that render tick. For video, ready RTP packets flow into frame assembly and then into the video decoder on the same master-clock timeline.
 
-This ensures smooth, continuous media even if packets arrive late or unevenly spaced.
+This ensures smooth, continuous media even if packets arrive late or unevenly spaced, while keeping audio and video aligned to the same master-clock playout model.
 
 ---
 
@@ -92,9 +93,16 @@ The goal: keep all streams within ±40 ms/hour of MCU time.
 Once the jitter buffer outputs time-aligned packets:
 
 1. Audio Path:
-   - Decode Opus → PCM (48 kHz).
-   - Mix multiple active speakers with limiter & gain control.
+   - The shared audio render loop takes one `now` value from the MCU master clock for the current tick.
+   - For each active audio track, it drains all ready packets from the jitter buffer via `Pop(now)`.
+   - Those packets flow into a per-track audio depacketizer, which converts RTP packet payloads into decodable Opus units while preserving timing and continuity metadata.
+   - The Opus decoder consumes those encoded units and outputs exactly one PCM block for the current render quantum (for example, 10 ms at 48 kHz).
+   - The mixer collects one PCM block from each active track for that same tick and combines them with gain control / limiting.
    - Encode mixed output → single Opus track for publication.
+
+In short, the audio flow after playout scheduling is:
+
+`jitter buffer Pop(now) -> depacketizer -> decoder -> one PCM block -> mixer`
 
 2. Video Path:
    - Decode VP8/H.264 → raw YUV frames.
