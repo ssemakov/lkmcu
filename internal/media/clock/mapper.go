@@ -11,6 +11,8 @@ import (
 	"github.com/ssemakov/lkmcu/internal/metrics"
 )
 
+// type
+
 // MapperState returned by RTPToNTP for observability
 type MapperState struct {
 	SRAge            time.Duration
@@ -20,8 +22,9 @@ type MapperState struct {
 	LastNTPOut       float64
 	Degraded         bool      // indicates if mapping is degraded, e.g., due to SR timeout
 	Discontinuity    bool      // indicates if last SR caused a discontinuity
-	Initialized      bool      // indicates if mapping has been initialized (at least one SR received)
+	HasSenderReport  bool      // indicates if mapping has been initialized (at least one SR received)
 	LastSRReceivedAt time.Time // timestamp of the last received SR
+	Clock            ClockState
 }
 
 type ClockMapperConfig struct {
@@ -112,40 +115,18 @@ func (cm *ClockMapper) UpdateFromSR(ssrc uint32, rtpTs, ntpHigh, ntpLow uint32) 
 		return nil
 	}
 
-	extRtp := sc.wrapTracker.ExtendedRTP(rtpTs)
-	predicted := sc.baseNTP + sc.deltaSeconds(extRtp)
-	delta := ntpTsSeconds - predicted
-	discontinuity := math.Abs(delta) > cm.cfg.DiscontinuityThreshold.Seconds()
-
-	if discontinuity {
-		cm.logger.Debugf("ClockMapper: SR step change %.3f ms for SSRC=%08x; treating as discontinuity",
-			delta*1000.0, ssrc)
-
-		// Reset wrap baseline to new origin
-		sc.wrapTracker.wraps = 0
-		sc.wrapTracker.lastRTP = rtpTs
-		sc.baseRTP = uint64(rtpTs)
-		sc.baseNTP = ntpTsSeconds
-
-		// Monotonic guard reset
-		sc.lastNTPOutput = sc.baseNTP
-		sc.degraded = true
-		sc.discontinuity = true
-
-		// TODO: drift estimator reset
-		// TODO: signal downstream via channel (actual flush/keyframe is handled by pipeline)
-	} else {
-		// Update stream clock state
-		sc.baseNTP = ntpTsSeconds
-		sc.baseRTP = extRtp
-	}
-
-	now := time.Now()
-	sc.lastSRReceivedAt = now
-
-	if !discontinuity {
-		sc.degraded = false
-		sc.discontinuity = false
+	switch sc.state {
+	case Uninitialized:
+		cm.logger.Debugf("ClockMapper: anchoring clock for SSRC=%08x with first SR (RTP=%d, NTP=%.6f)", ssrc, rtpTs, ntpTsSeconds)
+		// anchor the first SR, establishing the initial RTP→NTP mapping, don't degrade or discontinue on first SR
+		sc.Anchor(rtpTs, ntpTsSeconds)
+	case Anchored:
+		cm.logger.Debugf("ClockMapper: locking clock for SSRC=%08x with second SR (RTP=%d, NTP=%.6f)", ssrc, rtpTs, ntpTsSeconds)
+		// lock the clock on the second SR, confirming stability of the mapping
+		sc.Lock()
+		fallthrough
+	default:
+		sc.Update(rtpTs, ntpTsSeconds, cm.cfg.DiscontinuityThreshold)
 	}
 
 	return nil
@@ -198,7 +179,7 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 		ClockRate:        sc.clockRate,
 		LastNTPOut:       sc.lastNTPOutput,
 		LastSRReceivedAt: sc.lastSRReceivedAt,
-		Initialized:      true,
+		Clock:            sc.state,
 	}
 
 	// SR age check
@@ -275,19 +256,19 @@ func (cm *ClockMapper) RTPToNTPTime(ssrc, rtpTs uint32) (time.Time, MapperState,
 	return time.Unix(int64(sec), int64(math.Round(nsec))), state, err
 }
 
-func (cm *ClockMapper) HasSenderReport(ssrc uint32) bool {
-	cm.m.RLock()
-	sc, ok := cm.streamClocks[ssrc]
-	cm.m.RUnlock()
+// func (cm *ClockMapper) HasSenderReport(ssrc uint32) bool {
+// 	cm.m.RLock()
+// 	sc, ok := cm.streamClocks[ssrc]
+// 	cm.m.RUnlock()
 
-	if !ok {
-		return false
-	}
+// 	if !ok {
+// 		return false
+// 	}
 
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	return !sc.lastSRReceivedAt.IsZero()
-}
+// 	sc.mu.Lock()
+// 	defer sc.mu.Unlock()
+// 	return !sc.lastSRReceivedAt.IsZero()
+// }
 
 // SetClockRate sets the clock rate for the given SSRC stream
 func (cm *ClockMapper) SetClockRate(ssrc uint32, clockRate uint32) {
@@ -334,8 +315,9 @@ func (cm *ClockMapper) State(ssrc uint32) MapperState {
 		LastNTPOut:       sc.lastNTPOutput,
 		Degraded:         sc.degraded,
 		Discontinuity:    sc.discontinuity,
-		Initialized:      init,
+		HasSenderReport:  init,
 		LastSRReceivedAt: sc.lastSRReceivedAt,
+		Clock:            sc.state,
 	}
 }
 
@@ -362,7 +344,7 @@ func (cm *ClockMapper) ForEach(f func(ssrc uint32, state MapperState) bool) {
 			Degraded:         sc.degraded,
 			Discontinuity:    sc.discontinuity,
 			LastSRReceivedAt: sc.lastSRReceivedAt,
-			Initialized:      !sc.lastSRReceivedAt.IsZero(),
+			HasSenderReport:  !sc.lastSRReceivedAt.IsZero(),
 		}
 		sc.mu.Unlock()
 		states[ssrc] = state
