@@ -174,6 +174,66 @@ func TestMapper_SRTimeoutDegraded(t *testing.T) {
 	}
 }
 
+func TestMapper_SRTimeoutMeasuredFromLatestAcceptedSR(t *testing.T) {
+	cfg := *DefaultClockMapperConfig()
+	cfg.SRTimeout = 20 * time.Millisecond
+	cm := newTestMapper(&cfg)
+
+	const (
+		ssrc      = uint32(33)
+		clockRate = uint32(90000)
+	)
+	cm.SetClockRate(ssrc, clockRate)
+
+	// First SR anchors the clock.
+	ntp1 := 1000.0
+	rtp1 := uint32(0)
+	hi1, lo1 := testutil.ToNTPParts(ntp1)
+	if err := cm.UpdateFromSR(ssrc, rtp1, hi1, lo1); err != nil {
+		t.Fatalf("UpdateFromSR #1 err: %v", err)
+	}
+	st1 := cm.State(ssrc)
+	if st1.LastSRReceivedAt.IsZero() {
+		t.Fatal("expected first SR to set LastSRReceivedAt")
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	// Second stable SR should refresh the SR age origin.
+	rtp2 := uint32(clockRate)
+	ntp2 := ntp1 + 1.0
+	hi2, lo2 := testutil.ToNTPParts(ntp2)
+	if err := cm.UpdateFromSR(ssrc, rtp2, hi2, lo2); err != nil {
+		t.Fatalf("UpdateFromSR #2 err: %v", err)
+	}
+	st2 := cm.State(ssrc)
+	if !st2.LastSRReceivedAt.After(st1.LastSRReceivedAt) {
+		t.Fatalf("expected LastSRReceivedAt to move forward, before=%v after=%v", st1.LastSRReceivedAt, st2.LastSRReceivedAt)
+	}
+
+	// This exceeds the age from SR1, but should still be below the timeout from SR2.
+	time.Sleep(12 * time.Millisecond)
+
+	_, st, err := cm.RTPToNTP(ssrc, rtp2+1000)
+	if err != nil {
+		t.Fatalf("unexpected timeout measured from SR1 instead of SR2: %v", err)
+	}
+	if st.Degraded {
+		t.Fatalf("unexpected degraded=true before SR2-based timeout, state=%+v", st)
+	}
+
+	// Now exceed the timeout relative to SR2 and expect degradation.
+	time.Sleep(12 * time.Millisecond)
+
+	_, st, err = cm.RTPToNTP(ssrc, rtp2+2000)
+	if err == nil {
+		t.Fatal("expected SR timeout error after exceeding SR2-based timeout")
+	}
+	if !st.Degraded {
+		t.Fatalf("expected degraded=true after SR2-based timeout, state=%+v", st)
+	}
+}
+
 func TestMapper_MonotonicGuard_SmallBackstep(t *testing.T) {
 	cm := newTestMapper(nil)
 	const (

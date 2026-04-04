@@ -217,8 +217,13 @@ func (p *trackPipeline) handleRTCP() error {
 func (p *trackPipeline) onRTP(pkt packet.Packet) error {
 	status, err := p.buffer.Push(p.track.SSRC(), pkt)
 
-	if status != jitter_buffer.StatusAccepted {
-		p.logger.Infof("RTP packet was not accepted by the buffer, status: %v", jitter_buffer.StatusString(status))
+	if status == jitter_buffer.StatusMapperDegraded {
+		p.logger.Debugf("RTP accepted with buffer status: %v, track ID: %s", jitter_buffer.StatusString(status), p.track.ID())
+	} else if status != jitter_buffer.StatusAccepted {
+		p.logger.Debugf("RTP packet was not accepted by the buffer, status: %v, track ID: %s",
+			jitter_buffer.StatusString(status), p.track.ID())
+	} else {
+		p.logger.Debugf("RTP accepted, track ID: %s, Status: %v", p.track.ID(), jitter_buffer.StatusString(status))
 	}
 
 	if err != nil {

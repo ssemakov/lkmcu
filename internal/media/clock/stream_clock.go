@@ -89,6 +89,7 @@ func (sc *StreamClock) Update(rtpTs uint32, ntpTsSec float64, discontinuityThres
 		sc.resetDiscontinuity()
 		sc.baseNTP = ntpTsSec
 		sc.baseRTP = extRtp
+		sc.lastSRReceivedAt = time.Now()
 	}
 }
 

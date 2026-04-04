@@ -285,8 +285,11 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet packet.Packet) (Status, error) 
 		jb.logger.Errorf(e.Error())
 	}
 
-	// drop oldest
-	sbuf.dropOldest()
+	// drop oldest packets if occupancy exceeds the current target
+	if dropped := sbuf.dropOldest(); dropped > 0 {
+		jb.logger.Debugf("JitterBuffer: occupancy trim dropped %d packet(s) for SSRC %08x (target=%v, occupancy=%v, len=%d)",
+			dropped, ssrc, sbuf.target, sbuf.occupy, sbuf.heap.Len())
+	}
 
 	return status, nil
 }
@@ -442,8 +445,11 @@ func (jb *jitterBuffer) recalculatePts(sbuf *SSRCBuffer, ssrc uint32) {
 		jb.logger.Errorf(e.Error())
 	}
 
-	// drop oldest
-	sbuf.dropOldest()
+	// drop oldest packets if occupancy exceeds the current target
+	if dropped := sbuf.dropOldest(); dropped > 0 {
+		jb.logger.Debugf("JitterBuffer: occupancy trim dropped %d packet(s) during recalculation for SSRC %08x (target=%v, occupancy=%v, len=%d)",
+			dropped, ssrc, sbuf.target, sbuf.occupy, sbuf.heap.Len())
+	}
 }
 
 func (sbuf *SSRCBuffer) dupKey(pts int64, packet packet.Packet) bool {
@@ -492,14 +498,18 @@ func (sbuf *SSRCBuffer) memoryPressure(ssrc uint32, cfg *Config) (bool, error) {
 }
 
 // drop oldest packets until occupancy ≤ target_ms
-func (sbuf *SSRCBuffer) dropOldest() {
+func (sbuf *SSRCBuffer) dropOldest() int {
+	dropped := 0
 	for sbuf.heap.Len() > 0 {
 		sbuf.updateOccupancy()
 		if sbuf.occupy <= sbuf.target {
-			return
+			return dropped
 		}
 		sbuf.heap.PopPacket()
+		dropped++
 	}
+
+	return dropped
 }
 
 func (sbuf *SSRCBuffer) updateOccupancy() {

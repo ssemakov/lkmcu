@@ -22,8 +22,8 @@ type TrackPipelineManager interface {
 type trackPipelineManager struct {
 	factory   TrackPipelineFactory
 	pipelines map[string]TrackPipeline
-	buffer    jitter_buffer.Buffer
-	mapper    *clock.ClockMapper
+	// buffer    jitter_buffer.Buffer
+	// mapper    *clock.ClockMapper
 }
 
 // NewTrackPipelineManager creates a new instance of trackPipelineManager with the provided factory.
