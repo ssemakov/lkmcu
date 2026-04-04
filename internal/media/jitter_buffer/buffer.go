@@ -124,7 +124,7 @@ type SSRCBuffer struct {
 	freezeUntil  time.Time                  // Cursor freeze deadline used during rebuffering
 	freezeCursor time.Time                  // Cursor value while frozen
 	recent       common.RingBuffer[dupeKey] // Sliding window used for duplicate detection
-	noSR         bool                       // true if no Sender Report has been received yet for this SSRC
+	noSR         bool                       // true if the clock is not yet anchored by an SR
 
 	mu sync.Mutex
 }
@@ -218,32 +218,32 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet packet.Packet) (Status, error) 
 	sbuf.mu.Lock()
 	defer sbuf.mu.Unlock()
 
-	now := time.Now()
-	pts := now.UnixNano() // default to now if no SR yet
-	srAvailable := jb.mapper.HasSenderReport(ssrc)
-	var packetNtp time.Time
+	mapperState := jb.mapper.State(ssrc)
+	clockReady := mapperState.Clock != clock.Uninitialized
+
 	status := StatusAccepted
-	mapperState := clock.MapperState{}
+
+	if sbuf.noSR && clockReady {
+		jb.logger.Infof("JitterBuffer: SSRC %08x received first SR; exiting no-SR mode", ssrc)
+
+		// Exit no-SR mode on first SR, allowing packets to be buffered and playout to start based on mapper clock
+		sbuf.noSR = false
+		sbuf.heap = &PacketHeap{}
+		sbuf.recent.Clear()
+		sbuf.occupy = 0
+		sbuf.target = jb.cfg.Target
+	}
+
+	now := time.Now()
+	pts := now.UnixNano()
 	var err error
 
-	// Recalculate PTS for all buffered packets immediately upon receiving the first SR
-	if sbuf.noSR && srAvailable {
-		jb.logger.Infof("JitterBuffer: SSRC %08x received first SR; exiting no-SR mode", ssrc)
-		// set noSR to false before recalculating PTS to enable proper mapper usage
-		sbuf.noSR = false
-		jb.recalculatePts(sbuf, ssrc)
-	} else if !sbuf.noSR && !srAvailable {
-		jb.logger.Infof("JitterBuffer: SSRC %08x lost SR; entering no-SR mode", ssrc)
-		sbuf.noSR = true
-	}
-
-	// Normal operation when SR is available, map RTP→NTP
-	// otherwise use now as PTS to allow buffering
-	if srAvailable {
-		packetNtp, mapperState, err = jb.mapper.RTPToNTPTime(ssrc, packet.RtpTs)
+	if clockReady {
+		packetNtp, state, rtpNtpErr := jb.mapper.RTPToNTPTime(ssrc, packet.RtpTs)
+		mapperState = state
+		err = rtpNtpErr
 		pts = packetNtp.UnixNano()
 	}
-
 	// Handle mapper Discontinuity and Degraded states below, otherwise return error
 	if !mapperState.Degraded && !mapperState.Discontinuity && err != nil {
 		return StatusMapperError, err

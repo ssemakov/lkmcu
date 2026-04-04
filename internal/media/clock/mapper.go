@@ -166,9 +166,8 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 		return 0, MapperState{}, NoSenderReportError{SSRC: ssrc}
 	}
 
-	extRtp := sc.wrapTracker.ExtendedRTP(rtpTs)
 	// predicted NTP
-	ntp := sc.baseNTP + sc.deltaSeconds(extRtp)
+	ntp := sc.NtpTime(rtpTs)
 	srAge := time.Since(sc.lastSRReceivedAt)
 
 	state := MapperState{
@@ -255,20 +254,6 @@ func (cm *ClockMapper) RTPToNTPTime(ssrc, rtpTs uint32) (time.Time, MapperState,
 
 	return time.Unix(int64(sec), int64(math.Round(nsec))), state, err
 }
-
-// func (cm *ClockMapper) HasSenderReport(ssrc uint32) bool {
-// 	cm.m.RLock()
-// 	sc, ok := cm.streamClocks[ssrc]
-// 	cm.m.RUnlock()
-
-// 	if !ok {
-// 		return false
-// 	}
-
-// 	sc.mu.Lock()
-// 	defer sc.mu.Unlock()
-// 	return !sc.lastSRReceivedAt.IsZero()
-// }
 
 // SetClockRate sets the clock rate for the given SSRC stream
 func (cm *ClockMapper) SetClockRate(ssrc uint32, clockRate uint32) {

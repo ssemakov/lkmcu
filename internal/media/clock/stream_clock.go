@@ -62,10 +62,13 @@ func (wt *RTPWrapTracker) ExtendedRTP(ts uint32) (ext uint64) {
 	return uint64(ts) + uint64(wt.wraps)*(1<<32)
 }
 
-func (sc *StreamClock) Anchor(rtpTs uint32, ntpTsSec float64) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
+// All functions are not thread safe, caller must ensure proper synchronization when calling these functions
 
+func (sc *StreamClock) SetClockRate(clockRate uint32) {
+	sc.clockRate = clockRate
+}
+
+func (sc *StreamClock) Anchor(rtpTs uint32, ntpTsSec float64) {
 	sc.state = Anchored
 	sc.reset(rtpTs, ntpTsSec)
 	sc.degraded = false
@@ -73,28 +76,26 @@ func (sc *StreamClock) Anchor(rtpTs uint32, ntpTsSec float64) {
 }
 
 func (sc *StreamClock) Lock() {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-
 	sc.state = Locked
 }
 
 func (sc *StreamClock) Update(rtpTs uint32, ntpTsSec float64, discontinuityThreshold time.Duration) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-
 	extRtp := sc.wrapTracker.ExtendedRTP(rtpTs)
 	discontinuity := sc.detectDiscontinuity(extRtp, ntpTsSec, discontinuityThreshold)
 
 	if discontinuity {
-		sc.setDiscontinuity(rtpTs, ntpTsSeconds)
+		sc.setDiscontinuity(rtpTs, ntpTsSec)
 	} else {
 		sc.resetDiscontinuity()
-		sc.baseNTP = ntpTsSeconds
+		sc.baseNTP = ntpTsSec
 		sc.baseRTP = extRtp
 	}
 }
 
+func (sc *StreamClock) NtpTime(ntpTs uint32) float64 {
+	extRtp := sc.wrapTracker.ExtendedRTP(ntpTs)
+	return sc.baseNTP + sc.deltaSeconds(extRtp)
+}
 
 func (sc *StreamClock) detectDiscontinuity(extRtp uint64, ntpTsSec float64, threshold time.Duration) bool {
 	// Calculate expected NTP timestamp based on the anchored RTP/NTP reference
@@ -104,7 +105,7 @@ func (sc *StreamClock) detectDiscontinuity(extRtp uint64, ntpTsSec float64, thre
 	return math.Abs(delta) > threshold.Seconds()
 }
 
-func (sc *StreamClock) setDiscontinuity(ptsTs uint32, ntpTsSec float64) {) {
+func (sc *StreamClock) setDiscontinuity(ptsTs uint32, ntpTsSec float64) {
 	sc.reset(ptsTs, ntpTsSec)
 	sc.degraded = true
 	sc.discontinuity = true
