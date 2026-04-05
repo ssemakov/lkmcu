@@ -6,6 +6,7 @@ import (
 )
 
 type Logger interface {
+	Tracef(f string, a ...interface{})
 	Debugf(f string, a ...interface{})
 	Infof(f string, a ...interface{})
 	Errorf(f string, a ...interface{})
