@@ -8,7 +8,6 @@ package jitter_buffer
 
 import (
 	"fmt"
-	"sort"
 	"sync"
 	"time"
 
@@ -388,68 +387,6 @@ func (jb *jitterBuffer) Target(ssrc uint32) time.Duration {
 
 func (jb *jitterBuffer) Config() *Config {
 	return jb.cfg
-}
-
-func (jb *jitterBuffer) recalculatePts(sbuf *SSRCBuffer, ssrc uint32) {
-	// Thread safety is granted by the caller (caller holds sbuf.mu)
-	packets := make([]*timedPacket, 0, sbuf.heap.Len())
-	for sbuf.heap.Len() > 0 {
-		packets = append(packets, sbuf.heap.PopPacket())
-	}
-
-	// Sort packets by RTP timestamp and sequence number to avoid out of order PTS
-	// (This is different from the normal payload order used in the heap by Less() that uses PTS first)
-	// and triggering mapper's monotonic guard
-	sort.Slice(packets, func(i, j int) bool {
-		if packets[i].RtpTs == packets[j].RtpTs {
-			return packets[i].Seq < packets[j].Seq
-		}
-		return packets[i].RtpTs < packets[j].RtpTs
-	})
-
-	nHeap := &PacketHeap{}
-
-	// Clear recent dupeKey buffer as PTS are changing
-	sbuf.recent.Clear()
-
-	for _, tp := range packets {
-		packetNtp, _, err := jb.mapper.RTPToNTPTime(ssrc, tp.RtpTs)
-		if err != nil {
-			jb.logger.Debugf("Recalculate Pts: failed to remap RTP ts %d for SSRC %08x: %v",
-				tp.RtpTs, ssrc, err)
-			continue
-		}
-
-		if sbuf.dupKey(packetNtp.UnixNano(), tp.Packet) {
-			continue
-		}
-
-		unixPts := time.Unix(0, packetNtp.UnixNano())
-		now := time.Now()
-
-		if r, e := sbuf.dropLate(unixPts, now, jb.cfg); !r {
-			jb.logger.Debugf("Recalculate Pts: dropping late packet RTP ts %d for SSRC %08x: %v",
-				tp.RtpTs, ssrc, e)
-			continue
-		}
-
-		tp.PayloadTs = unixPts
-		nHeap.PushPacket(tp)
-	}
-
-	sbuf.heap = nHeap
-	sbuf.updateOccupancy()
-
-	// Memory pressure check, drop overflowing the heap packets
-	if r, e := sbuf.memoryPressure(ssrc, jb.cfg); !r {
-		jb.logger.Errorf(e.Error())
-	}
-
-	// drop oldest packets if occupancy exceeds the current target
-	if dropped := sbuf.dropOldest(); dropped > 0 {
-		jb.logger.Debugf("JitterBuffer: occupancy trim dropped %d packet(s) during recalculation for SSRC %08x (target=%v, occupancy=%v, len=%d)",
-			dropped, ssrc, sbuf.target, sbuf.occupy, sbuf.heap.Len())
-	}
 }
 
 func (sbuf *SSRCBuffer) dupKey(pts int64, packet packet.Packet) bool {
