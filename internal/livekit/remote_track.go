@@ -15,6 +15,7 @@ type RemoteTrack interface {
 	SSRC() uint32
 	SetReadDeadline(time.Time) error
 	ClockRate() uint32
+	MimeType() string
 }
 
 // remoteTrackAdapter adapts a webrtc.TrackRemote to the RemoteTrack interface.
@@ -47,9 +48,13 @@ func (a *remoteTrackAdapter) SSRC() uint32 {
 func (a *remoteTrackAdapter) ClockRate() uint32 {
 	codec := a.track.Codec()
 	return codec.ClockRate
-
 }
 
 func (a *remoteTrackAdapter) SetReadDeadline(t time.Time) error {
 	return a.track.SetReadDeadline(t)
+}
+
+func (a *remoteTrackAdapter) MimeType() string {
+	codec := a.track.Codec()
+	return codec.MimeType
 }

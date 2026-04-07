@@ -77,6 +77,9 @@ func (f *DefaultTrackPipelineFactory) NewTrackPipeline(track livekit.RemoteTrack
 		config = DefaultTrackPipelineConfig()
 	}
 
+	f.Logger.Infof("Creating new track pipeline for track ID: %s, SSRC: %d, ClockRate: %d, MimeType: %s",
+		track.ID(), track.SSRC(), track.ClockRate(), track.MimeType())
+
 	return &trackPipeline{
 		buffer:   f.Buffer,
 		mapper:   f.Mapper,
