@@ -93,9 +93,9 @@ func TestStreamClock_AnchorInitializesState(t *testing.T) {
 	}
 
 	const (
-		rtpTs   = uint32(12345)
-		ntpTs   = 1000.25
-		rate    = uint32(90000)
+		rtpTs = uint32(12345)
+		ntpTs = 1000.25
+		rate  = uint32(90000)
 	)
 
 	sc.SetClockRate(rate)
