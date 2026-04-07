@@ -77,30 +77,38 @@ Time (in seconds) ────────────────────�
 
 - `base_rtp` (uint64), `base_ntp` (float64 seconds)
 - `clock_rate` (uint32)
-- `offset` (= `base_ntp`, internal convenience)
 - `wrap_tracker` (last_rtp, wraps) to extend 32‑bit RTP into 64‑bit space
 - `last_ntp_out` (float64): monotonic guard for converted timestamps
 - `last_sr_received_at` (time.Time): arrival time used for SR freshness
+- `state`: explicit clock phase
+  - `Uninitialized`: no SR has anchored the stream yet
+  - `Anchored`: first SR installed; RTP→NTP mapping is usable for new packets
+  - `Locked`: a later consistent SR confirmed continuity
 - `degraded`, `discontinuity` flags for observability/guards
 
 ### Update Flow
 
 1. **SR Arrival**
    - Out‑of‑order guard: SRs with NTP older than the current anchor (within an `epsilon` tolerance) are ignored.
-   - Extend RTP to 64‑bit via wrap detection: if `rtp_new < rtp_prev` and `rtp_prev - rtp_new > 2^31`, increment wraps; then `extended = rtp_new + wraps·2^32`.
-   - Predict expected NTP at the SR’s RTP using the current linear model and compare to the SR’s NTP. If `|delta| > discontinuity_threshold`, treat as a sender clock discontinuity:
+   - State transition on accepted SR:
+     - `Uninitialized -> Anchored`: first SR establishes the initial RTP→NTP anchor and does not count as a discontinuity.
+     - `Anchored -> Locked`: second accepted SR confirms continuity and moves the stream into steady state.
+     - `Locked -> Locked`: later accepted SRs refresh the anchor in steady state.
+   - On accepted non-bootstrap SRs, extend RTP to 64‑bit via wrap detection and compare the SR NTP to the predicted NTP from the current model.
+   - If `|delta| > discontinuity_threshold`, treat the SR as a discontinuity:
      - Reset wrap baseline (`wraps=0`, `last_rtp=rtp_new`).
-     - Set `base_rtp = rtp_new` (raw), `base_ntp = sr.ntp`, `offset = base_ntp`.
+     - Set `base_rtp = rtp_new`, `base_ntp = sr.ntp`.
      - Reset `last_ntp_out = base_ntp`; set `degraded = true`, `discontinuity = true`.
-   - Otherwise (no discontinuity), update the anchor to the SR: `base_rtp = extended`, `base_ntp = sr.ntp`, `offset = base_ntp`.
-   - Record `last_sr_received_at = now`. On non‑discontinuity SRs, clear `degraded`/`discontinuity`.
+   - Otherwise, refresh `base_rtp`, `base_ntp`, and `last_sr_received_at`, and clear `degraded`/`discontinuity`.
 2. **Between SRs**
    - Convert incoming RTP timestamps using the linear model with the wrap tracker.
+   - `Uninitialized` streams reject conversion with a no-SR error.
+   - `Anchored` and `Locked` streams both allow mapping of new packets.
    - Enforce monotonic output per SSRC. If the computed NTP would move backwards relative to `last_ntp_out`:
      - If the backstep is small (`< backstep_clamp_threshold`), clamp forward to `last_ntp_out + clamp_smoothing`.
-     - Otherwise, mark `degraded = true` and clamp to `last_ntp_out + clamp_smoothing`.
+     - Otherwise, mark `degraded = true`, `discontinuity = true`, and clamp to `last_ntp_out + clamp_smoothing`.
 3. **Missing SRs**
-   - After `sr_timeout` without SRs, mark the mapping `degraded` and return an error on conversion while still providing a best‑effort projected NTP.
+   - After `sr_timeout` without a fresh accepted SR, mark the mapping `degraded` and return an error on conversion while still providing a best-effort projected NTP.
 
 ## Drift Detection & Correction
 
@@ -154,11 +162,11 @@ Where:
 
 ## Integration Points
 
-- `internal/media/clock/mapper.go`: implements API above.
-- `internal/media/clock/drift.go`: owns drift estimator, exposes adjustment hints to mixers/decoders.
-- `internal/media/buffer/jitter.go`: consumes mapper output for playout scheduling (see companion doc).
-- `internal/metrics`: registers metrics; ensure labels include SSRC and track IDs when safe.
-- `internal/pipeline`: inject mapper/drift controller into subscriber lifecycle and decoders.
+- `internal/media/clock/mapper.go`: implements the RTP→NTP mapping and SR state machine above.
+- `internal/media/clock/stream_clock.go`: owns the per-SSRC clock phase and anchor/discontinuity helpers.
+- `internal/media/clock/drift.go`: contains the drift estimator logic.
+- `internal/media/jitter_buffer/buffer.go`: consumes mapper output for packet admission and degraded-mode widening.
+- `internal/pipeline` / `internal/media/processor`: inject mapper and jitter buffer into subscriber lifecycle.
 
 ## Failure Modes & Mitigations
 

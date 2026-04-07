@@ -65,8 +65,10 @@ Expose these values through `internal/config` (e.g., `media.jitter.audio.initial
 
 ### Startup
 
-- Accumulate packets until occupancy ≥ `initial_target_ms`.
-- Report `media_jitter_startup_duration_ms` metric and publish event for observability.
+- Before the first trustworthy SR arrives, `Push()` may temporarily hold packets using arrival time only.
+- `Pop()` does not release packets while the SSRC remains in `noSR` mode.
+- On the first SR (`Uninitialized -> Anchored` in the mapper), the buffer flushes all pre-SR packets and starts fresh on the mapper-derived RTP→NTP timeline.
+- Startup therefore does not attempt to salvage or remap pre-SR packets; it prefers a short startup loss over mixing arrival-time and anchored-time packets in one heap.
 
 ### Adaptive Depth Control
 
@@ -110,10 +112,11 @@ const (
 )
 
 type Buffer interface {
-    Push(pkt Packet, mapperState clock.MapperState) Status
-    Pop(now time.Time) (Packet, bool)
-    Occupancy() time.Duration
-    Target() time.Duration
+    Push(ssrc uint32, pkt packet.Packet) (Status, error)
+    Pop(ssrc uint32, now time.Time) (packet.Packet, bool)
+    Occupancy(ssrc uint32) time.Duration
+    Target(ssrc uint32) time.Duration
+    Config() *Config
 }
 ```
 
@@ -134,10 +137,10 @@ type Buffer interface {
 
 ## Integration & Dependencies
 
-- Depends on clock mapper for stable timestamps; receives `MapperState` to detect degradation.
-- Integrated in `internal/media/buffer/jitter.go` with constructors `NewAudioBuffer(cfg)` and `NewVideoBuffer(cfg)`.
-- `internal/pipeline` ensures each subscriber uses buffer `Push`/`Pop` around decoder/mixer.
-- `internal/metrics` registers counters/histograms using repo-standard collector helpers.
+- Depends on `internal/media/clock/mapper.go` for RTP→NTP timestamping and mapper health.
+- Implemented in `internal/media/jitter_buffer/buffer.go`.
+- Currently wired into the subscriber pipeline on `Push()` from `internal/media/processor/track_pipeline.go`.
+- `internal/metrics` integration described here is still aspirational and should be treated as future work unless explicitly implemented.
 
 ## Failure Modes & Mitigations
 
