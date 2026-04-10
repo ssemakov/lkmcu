@@ -19,3 +19,10 @@ type DecodeMeta struct {
 	LostBefore    int  // number of missing RTP packets before this unit/frame
 	Discontinuous bool // reset / seek / large gap / mapper jump
 }
+
+type Decoder interface {
+	Open() error
+	Close() error
+	Reset() error
+	Accept(EncodedUnit) error
+}

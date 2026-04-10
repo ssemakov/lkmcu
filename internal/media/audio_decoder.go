@@ -34,6 +34,6 @@ type AudioDecoder interface {
 	Open() error
 	Close() error
 	Reset() error
-	Accept(EncodedAudioUnit) error
+	Accept(EncodedUnit) error
 	ReadPCM(samplePerCh int) (PCMBlock, error)
 }
