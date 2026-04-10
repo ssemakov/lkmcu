@@ -49,7 +49,8 @@ func TestDefaultTrackPipelineFactory_NewTrackPipeline_CtxNilError(t *testing.T) 
 
 func TestDefaultTrackPipelineFactory_NewTrackPipeline_DefaultConfigFallback(t *testing.T) {
 	factory := &DefaultTrackPipelineFactory{
-		Ctx: context.Background(),
+		Ctx:    context.Background(),
+		Logger: logging.NewNullLogger("test", "null"),
 		// zero-value config should fall back to defaults
 		Config: TrackPipelineConfig{},
 	}

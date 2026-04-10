@@ -11,7 +11,10 @@ import (
 	"github.com/pion/transport/v3/packetio"
 	"github.com/ssemakov/lkmcu/internal/livekit"
 	"github.com/ssemakov/lkmcu/internal/logging"
+	"github.com/ssemakov/lkmcu/internal/media"
 	"github.com/ssemakov/lkmcu/internal/media/clock"
+	"github.com/ssemakov/lkmcu/internal/media/decoders"
+	"github.com/ssemakov/lkmcu/internal/media/depaketizers"
 	"github.com/ssemakov/lkmcu/internal/media/jitter_buffer"
 	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
@@ -28,6 +31,7 @@ type TrackPipeline interface {
 	Start()
 	// Stop the pipeline and release resources.
 	Stop()
+	Render(now time.Time)
 }
 
 // TrackPipelineFactory defines an interface for creating new track pipelines.
@@ -48,15 +52,17 @@ type DefaultTrackPipelineFactory struct {
 }
 
 type trackPipeline struct {
-	buffer   jitter_buffer.Buffer
-	mapper   *clock.ClockMapper
-	track    livekit.RemoteTrack
-	receiver livekit.Receiver
-	config   TrackPipelineConfig
-	ctx      context.Context
-	cancel   context.CancelFunc
-	logger   logging.Logger
-	wg       sync.WaitGroup
+	buffer      jitter_buffer.Buffer
+	mapper      *clock.ClockMapper
+	track       livekit.RemoteTrack
+	receiver    livekit.Receiver
+	config      TrackPipelineConfig
+	ctx         context.Context
+	cancel      context.CancelFunc
+	logger      logging.Logger
+	depaketizer media.Depaketizer
+	decoder     media.Decoder
+	wg          sync.WaitGroup
 }
 
 func DefaultTrackPipelineConfig() TrackPipelineConfig {
@@ -80,7 +86,7 @@ func (f *DefaultTrackPipelineFactory) NewTrackPipeline(track livekit.RemoteTrack
 	f.Logger.Infof("Creating new track pipeline for track ID: %s, SSRC: %d, ClockRate: %d, MimeType: %s",
 		track.ID(), track.SSRC(), track.ClockRate(), track.MimeType())
 
-	return &trackPipeline{
+	pipeline := trackPipeline{
 		buffer:   f.Buffer,
 		mapper:   f.Mapper,
 		track:    track,
@@ -90,7 +96,17 @@ func (f *DefaultTrackPipelineFactory) NewTrackPipeline(track livekit.RemoteTrack
 		cancel:   cancel,
 		logger:   f.Logger,
 		wg:       sync.WaitGroup{},
-	}, nil
+	}
+
+	switch track.MimeType() {
+	case "audio/opus":
+		pipeline.depaketizer = depaketizers.NewOpusDepaketizer()
+		pipeline.decoder = decoders.NewOpusDecoder()
+	default:
+		return nil, errors.New("unsupported track MIME type: " + track.MimeType())
+	}
+
+	return &pipeline, nil
 }
 
 func (p *trackPipeline) Start() {
@@ -157,11 +173,13 @@ func (p *trackPipeline) Start() {
 func (p *trackPipeline) Stop() {
 	p.cancel()
 
-	if err := p.track.SetReadDeadline(time.Now()); err != nil {
+	now := time.Now()
+
+	if err := p.track.SetReadDeadline(now); err != nil {
 		p.logger.Errorf("error setting track read deadline during stop: %v", err)
 	}
 
-	if err := p.receiver.SetReadDeadline(time.Now()); err != nil {
+	if err := p.receiver.SetReadDeadline(now); err != nil {
 		p.logger.Errorf("error setting receiver read deadline during stop: %v", err)
 	}
 
@@ -174,6 +192,32 @@ func (p *trackPipeline) Stop() {
 	})
 	p.wg.Wait()
 	timer.Stop()
+}
+
+func (p *trackPipeline) Render(now time.Time) {
+	ssrc := p.track.SSRC()
+
+	for {
+		pkt, ok := p.buffer.Pop(ssrc, now)
+		if !ok {
+			// No more packets to render at this time, exit the loop and wait for the next render call
+			return
+		}
+		p.logger.Tracef("Popped packet from buffer for track ID: %s, SSRC: %d, RTP Time: %d", p.track.ID(), ssrc, pkt.RtpTs)
+
+		depaketized, err := p.depaketizer.Depaketize(pkt)
+		if err != nil {
+			p.logger.Errorf("error depaketizing packet for track ID: %s, SSRC: %d, RTP Time: %d, error: %v",
+				p.track.ID(), ssrc, pkt.RtpTs, err)
+			continue // skip this packet and continue with the next one
+		}
+		if err = p.decoder.Accept(depaketized); err != nil {
+			p.logger.Errorf("error decoding packet for track ID: %s, SSRC: %d, RTP Time: %d, error: %v",
+				p.track.ID(), ssrc, pkt.RtpTs, err)
+			continue // skip this packet and continue with the next one
+		}
+	}
+
 }
 
 func (p *trackPipeline) handleRTP() error {

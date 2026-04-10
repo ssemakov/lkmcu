@@ -192,6 +192,12 @@ func (a *Agent) applyEvent(ev SystemEvent) {
 			case lk.TrackSubscribed:
 				// TODO properly convert to video-full, video-low, pause
 				a.roomSnap.UpsertSubCache(lkEvt.TID, DecisionAction(lkEvt.Kind))
+				// TODO audio only for now, we can ignore video tracks until we implement video pipelines
+				if lkEvt.RemoteTrack.Kind() != "audio" {
+					a.cfg.Logger.Infof("currently only audio tracks are supported, ignoring track subscription for track ID: %s, kind: %s",
+						lkEvt.TID, lkEvt.RemoteTrack.Kind())
+					continue
+				}
 				_, err := a.trackPipelineManager.NewTrackPipeline(lkEvt.RemoteTrack, lkEvt.Receiver)
 				if err != nil {
 					a.cfg.Logger.Errorf("error creating track pipeline: %v", err)

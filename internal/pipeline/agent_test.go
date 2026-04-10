@@ -177,6 +177,7 @@ func (f fakeRemoteTrack) Kind() string                    { return f.kind }
 func (f fakeRemoteTrack) ReadRTP() (packet.Packet, error) { return packet.Packet{}, nil }
 func (f fakeRemoteTrack) SSRC() uint32                    { return f.ssrc }
 func (f fakeRemoteTrack) ClockRate() uint32               { return 90000 }
+func (f fakeRemoteTrack) MimeType() string                { return "" }
 func (f fakeRemoteTrack) SetReadDeadline(time.Time) error { return nil }
 
 type noopTrackPipelineManager struct{}
