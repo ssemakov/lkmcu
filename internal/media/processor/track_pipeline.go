@@ -83,7 +83,7 @@ func (f *DefaultTrackPipelineFactory) NewTrackPipeline(track livekit.RemoteTrack
 		config = DefaultTrackPipelineConfig()
 	}
 
-	f.Logger.Infof("Creating new track pipeline for track ID: %s, SSRC: %d, ClockRate: %d, MimeType: %s",
+	f.Logger.Infof("Creating new track pipeline for track ID: %s, SSRC: %08x, ClockRate: %d, MimeType: %s",
 		track.ID(), track.SSRC(), track.ClockRate(), track.MimeType())
 
 	pipeline := trackPipeline{
@@ -266,11 +266,11 @@ func (p *trackPipeline) onRTP(pkt packet.Packet) error {
 
 	switch status {
 	case jitter_buffer.StatusMapperDegraded:
-		p.logger.Infof("RTP accepted but clock mapper is degraded, track ID: %s", p.track.ID())
+		p.logger.Debugf("RTP accepted but clock mapper is degraded, track ID: %s", p.track.ID())
 	case jitter_buffer.StatusAccepted:
 		p.logger.Tracef("RTP accepted, track ID: %s", p.track.ID())
 	default:
-		p.logger.Infof("RTP packet was not accepted by the buffer, status: %v, track ID: %s",
+		p.logger.Debugf("RTP packet was not accepted by the buffer, status: %v, track ID: %s",
 			jitter_buffer.StatusString(status), p.track.ID())
 	}
 
