@@ -1,3 +1,5 @@
+// Package processor wires track-level ingest and render loops on top of
+// clock mapping, jitter buffering, depacketization, and decoding.
 package processor
 
 import (
@@ -19,30 +21,34 @@ import (
 	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
 
-// Temp interface until I figure out the RTP packet interface.
-type Packet interface {
-}
-
-// TrackPipeline defines interface for processing single track.
-// There's per track pipeline instance.
-// The registry of pipelines is maintained by the TracksRuntime
+// TrackPipeline processes one remote track from RTP/RTCP ingest through
+// buffered rendering.
+//
+// Contract:
+//   - Start() launches the RTP and RTCP read loops for the track.
+//   - Stop() cancels the loops, releases receiver resources, and waits
+//     for the pipeline goroutines to exit.
+//   - Render() drains packets whose playout time has arrived and passes
+//     them through depacketization and decoding.
 type TrackPipeline interface {
-	// Start the pipeline.
 	Start()
-	// Stop the pipeline and release resources.
 	Stop()
 	Render(now time.Time)
 }
 
-// TrackPipelineFactory defines an interface for creating new track pipelines.
+// TrackPipelineFactory creates per-track processing pipelines.
 type TrackPipelineFactory interface {
 	NewTrackPipeline(track livekit.RemoteTrack, receiver livekit.Receiver) (TrackPipeline, error)
 }
 
+// TrackPipelineConfig controls per-track RTP and RTCP read deadlines.
 type TrackPipelineConfig struct {
 	RTPReadDeadline  time.Duration
 	RTCPReadDeadline time.Duration
 }
+
+// DefaultTrackPipelineFactory builds track pipelines using shared context,
+// logging, clock mapping, and jitter buffering components.
 type DefaultTrackPipelineFactory struct {
 	Logger logging.Logger
 	Ctx    context.Context
@@ -65,6 +71,8 @@ type trackPipeline struct {
 	wg          sync.WaitGroup
 }
 
+// DefaultTrackPipelineConfig returns conservative read deadlines suitable
+// for the RTP and RTCP polling loops.
 func DefaultTrackPipelineConfig() TrackPipelineConfig {
 	return TrackPipelineConfig{
 		RTPReadDeadline:  100 * time.Millisecond,
@@ -72,6 +80,10 @@ func DefaultTrackPipelineConfig() TrackPipelineConfig {
 	}
 }
 
+// NewTrackPipeline creates a TrackPipeline for the given remote track and
+// receiver. It validates the factory context, applies default config when
+// needed, and selects depacketizer/decoder implementations from the track
+// MIME type.
 func (f *DefaultTrackPipelineFactory) NewTrackPipeline(track livekit.RemoteTrack, receiver livekit.Receiver) (TrackPipeline, error) {
 	if f.Ctx == nil {
 		return nil, errors.New("context is required in TrackPipelineFactory")
@@ -109,67 +121,19 @@ func (f *DefaultTrackPipelineFactory) NewTrackPipeline(track livekit.RemoteTrack
 	return &pipeline, nil
 }
 
+// Start launches the RTP and RTCP read loops for the track.
+// Timeouts are retried, expected closure signals stop the loop quietly,
+// and other errors are logged before terminating the pipeline.
 func (p *trackPipeline) Start() {
 	p.mapper.SetClockRate(p.track.SSRC(), p.track.ClockRate())
 	p.wg.Add(2)
 
-	go func() {
-		defer p.wg.Done()
-
-		for {
-			select {
-			case <-p.ctx.Done():
-				return
-			default:
-				err := p.handleRTP()
-				switch {
-				case p.isTimeout(err):
-					// expected when no packets are available, just return and wait for the next read
-					continue
-				case errors.Is(err, io.EOF),
-					errors.Is(err, io.ErrClosedPipe),
-					errors.Is(err, context.Canceled):
-					// expected when the track or receiver is closed, just return and stop the pipeline
-					return
-				default:
-					if err != nil {
-						p.logger.Errorf("error handling RTP: %v", err)
-						return // if there's an error other than timeout or expected closure, stop the pipeline
-					}
-				}
-			}
-		}
-	}()
-
-	go func() {
-		defer p.wg.Done()
-
-		for {
-			select {
-			case <-p.ctx.Done():
-				return
-			default:
-				err := p.handleRTCP()
-				switch {
-				case p.isTimeout(err):
-					// expected when no packets are available, just return and wait for the next read
-					continue
-				case errors.Is(err, io.EOF),
-					errors.Is(err, io.ErrClosedPipe),
-					errors.Is(err, context.Canceled):
-					// expected when the track or receiver is closed, just return and stop the pipeline
-					return
-				default:
-					if err != nil {
-						p.logger.Errorf("error handling RTCP: %v", err)
-						return // if there's an error other than timeout or expected closure, stop the pipeline
-					}
-				}
-			}
-		}
-	}()
+	go p.rtpIngestLoop()
+	go p.rtcpIngestLoop()
 }
 
+// Stop cancels the pipeline context, unblocks pending reads, stops the
+// receiver, and waits for the worker goroutines to exit.
 func (p *trackPipeline) Stop() {
 	p.cancel()
 
@@ -194,6 +158,9 @@ func (p *trackPipeline) Stop() {
 	timer.Stop()
 }
 
+// Render drains ready packets for the track SSRC and sends them through
+// depacketization and decoding. Packets that fail either step are logged
+// and skipped.
 func (p *trackPipeline) Render(now time.Time) {
 	ssrc := p.track.SSRC()
 
@@ -240,6 +207,62 @@ func (p *trackPipeline) handleRTP() error {
 	}
 
 	return nil
+}
+
+func (p *trackPipeline) rtpIngestLoop() {
+	defer p.wg.Done()
+
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		default:
+			err := p.handleRTP()
+			switch {
+			case p.isTimeout(err):
+				// expected when no packets are available, just return and wait for the next read
+				continue
+			case errors.Is(err, io.EOF),
+				errors.Is(err, io.ErrClosedPipe),
+				errors.Is(err, context.Canceled):
+				// expected when the track or receiver is closed, just return and stop the pipeline
+				return
+			default:
+				if err != nil {
+					p.logger.Errorf("error handling RTP: %v", err)
+					return // if there's an error other than timeout or expected closure, stop the pipeline
+				}
+			}
+		}
+	}
+}
+
+func (p *trackPipeline) rtcpIngestLoop() {
+	defer p.wg.Done()
+
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		default:
+			err := p.handleRTCP()
+			switch {
+			case p.isTimeout(err):
+				// expected when no packets are available, just return and wait for the next read
+				continue
+			case errors.Is(err, io.EOF),
+				errors.Is(err, io.ErrClosedPipe),
+				errors.Is(err, context.Canceled):
+				// expected when the track or receiver is closed, just return and stop the pipeline
+				return
+			default:
+				if err != nil {
+					p.logger.Errorf("error handling RTCP: %v", err)
+					return // if there's an error other than timeout or expected closure, stop the pipeline
+				}
+			}
+		}
+	}
 }
 
 func (p *trackPipeline) handleRTCP() error {
