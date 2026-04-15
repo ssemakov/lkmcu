@@ -50,11 +50,12 @@ type TrackPipelineConfig struct {
 // DefaultTrackPipelineFactory builds track pipelines using shared context,
 // logging, clock mapping, and jitter buffering components.
 type DefaultTrackPipelineFactory struct {
-	Logger logging.Logger
-	Ctx    context.Context
-	Config TrackPipelineConfig
-	Mapper *clock.ClockMapper
-	Buffer jitter_buffer.Buffer
+	Logger       logging.Logger
+	Ctx          context.Context
+	Config       TrackPipelineConfig
+	Mapper       *clock.ClockMapper
+	Buffer       jitter_buffer.Buffer
+	CodecFactory media.CodecFactory
 }
 
 type trackPipeline struct {
@@ -63,12 +64,13 @@ type trackPipeline struct {
 	track       livekit.RemoteTrack
 	receiver    livekit.Receiver
 	config      TrackPipelineConfig
-	ctx         context.Context
-	cancel      context.CancelFunc
-	logger      logging.Logger
-	depaketizer media.Depaketizer
-	decoder     media.Decoder
-	wg          sync.WaitGroup
+	depaketizer depaketizers.Depaketizer
+	decoder     decoders.Decoder
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	logger logging.Logger
+	wg     sync.WaitGroup
 }
 
 // DefaultTrackPipelineConfig returns conservative read deadlines suitable
@@ -95,30 +97,43 @@ func (f *DefaultTrackPipelineFactory) NewTrackPipeline(track livekit.RemoteTrack
 		config = DefaultTrackPipelineConfig()
 	}
 
+	if f.CodecFactory == nil {
+		f.CodecFactory = &media.DefaultCodecFactory{}
+	}
+
 	f.Logger.Infof("Creating new track pipeline for track ID: %s, SSRC: %08x, ClockRate: %d, MimeType: %s",
 		track.ID(), track.SSRC(), track.ClockRate(), track.MimeType())
 
-	pipeline := trackPipeline{
-		buffer:   f.Buffer,
-		mapper:   f.Mapper,
-		track:    track,
-		receiver: receiver,
-		config:   config,
-		ctx:      runCtx,
-		cancel:   cancel,
-		logger:   f.Logger,
-		wg:       sync.WaitGroup{},
+	depaketizer, err := f.CodecFactory.NewDepaketizer(track.MimeType())
+
+	if err != nil {
+		cancel()
+		f.Logger.Errorf("Failed to create depaketizer for track ID: %s, error: %v", track.ID(), err)
+		return nil, err
 	}
 
-	switch track.MimeType() {
-	case "audio/opus":
-		pipeline.depaketizer = depaketizers.NewOpusDepaketizer()
-		pipeline.decoder = decoders.NewOpusDecoder()
-	default:
-		return nil, errors.New("unsupported track MIME type: " + track.MimeType())
+	decoder, err := f.CodecFactory.NewDecoder(track.MimeType())
+
+	if err != nil {
+		cancel()
+		f.Logger.Errorf("Failed to create decoder for track ID: %s, error: %v", track.ID(), err)
+		return nil, err
 	}
 
-	return &pipeline, nil
+	return &trackPipeline{
+		buffer:      f.Buffer,
+		mapper:      f.Mapper,
+		track:       track,
+		receiver:    receiver,
+		config:      config,
+		depaketizer: depaketizer,
+		decoder:     decoder,
+
+		ctx:    runCtx,
+		cancel: cancel,
+		logger: f.Logger,
+		wg:     sync.WaitGroup{},
+	}, nil
 }
 
 // Start launches the RTP and RTCP read loops for the track.

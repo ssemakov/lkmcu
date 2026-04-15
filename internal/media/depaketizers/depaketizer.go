@@ -1,4 +1,4 @@
-package media
+package depaketizers
 
 import "github.com/ssemakov/lkmcu/internal/media/packet"
 

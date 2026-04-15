@@ -1,7 +1,6 @@
 package depaketizers
 
 import (
-	"github.com/ssemakov/lkmcu/internal/media"
 	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
 
@@ -22,7 +21,7 @@ func (d *OpusDepaketizer) Close() error {
 	return nil
 }
 
-func (d *OpusDepaketizer) Depaketize(packet packet.Packet) (media.EncodedUnit, error) {
+func (d *OpusDepaketizer) Depaketize(packet packet.Packet) (EncodedUnit, error) {
 	// Implement Opus depaketization logic here.
 	// This typically involves parsing the RTP payload and extracting the Opus frames.
 	return nil, nil

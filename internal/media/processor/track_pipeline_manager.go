@@ -8,6 +8,7 @@ import (
 
 	"github.com/ssemakov/lkmcu/internal/livekit"
 	"github.com/ssemakov/lkmcu/internal/logging"
+	"github.com/ssemakov/lkmcu/internal/media"
 	"github.com/ssemakov/lkmcu/internal/media/clock"
 	"github.com/ssemakov/lkmcu/internal/media/jitter_buffer"
 	"github.com/ssemakov/lkmcu/internal/metrics"
@@ -41,11 +42,12 @@ func NewTrackPipelineManager(l logging.Logger, ctx context.Context) TrackPipelin
 
 	tpm := trackPipelineManager{
 		factory: &DefaultTrackPipelineFactory{
-			Logger: l,
-			Ctx:    ctx,
-			Config: DefaultTrackPipelineConfig(),
-			Mapper: clock_mapper,
-			Buffer: buffer,
+			Logger:       l,
+			Ctx:          ctx,
+			Config:       DefaultTrackPipelineConfig(),
+			Mapper:       clock_mapper,
+			Buffer:       buffer,
+			CodecFactory: &media.DefaultCodecFactory{},
 		},
 		pipelines: make(map[string]TrackPipeline),
 		buffer:    &buffer,

@@ -1,6 +1,8 @@
 package decoders
 
-import "github.com/ssemakov/lkmcu/internal/media"
+import (
+	"github.com/ssemakov/lkmcu/internal/media/depaketizers"
+)
 
 type OpusDecoder struct {
 }
@@ -24,12 +26,12 @@ func (d *OpusDecoder) Reset() error {
 	return nil
 }
 
-func (d *OpusDecoder) Accept(unit media.EncodedUnit) error {
+func (d *OpusDecoder) Accept(unit depaketizers.EncodedUnit) error {
 	// Process the encoded audio unit and decode it into PCM format.
 	return nil
 }
 
-func (d *OpusDecoder) ReadPCM(samplePerCh int) (media.PCMBlock, error) {
+func (d *OpusDecoder) ReadPCM(samplePerCh int) (PCMBlock, error) {
 	// Read decoded PCM audio data and return it as a PCMBlock.
-	return media.PCMBlock{}, nil
+	return PCMBlock{}, nil
 }

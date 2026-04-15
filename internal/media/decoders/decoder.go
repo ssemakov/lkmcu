@@ -1,6 +1,10 @@
-package media
+package decoders
 
-import "time"
+import (
+	"time"
+
+	"github.com/ssemakov/lkmcu/internal/media/depaketizers"
+)
 
 type CodecID string
 
@@ -24,5 +28,5 @@ type Decoder interface {
 	Open() error
 	Close() error
 	Reset() error
-	Accept(EncodedUnit) error
+	Accept(depaketizers.EncodedUnit) error
 }
