@@ -38,13 +38,14 @@ func (p *fakeTP) Stop() {
 func (p *fakeTP) Render(time.Time) {}
 
 type fakeTrack struct {
-	id string
+	id   string
+	ssrc uint32
 }
 
 func (t fakeTrack) ID() string                      { return t.id }
 func (t fakeTrack) Kind() string                    { return "audio" }
 func (t fakeTrack) ReadRTP() (packet.Packet, error) { return packet.Packet{}, nil }
-func (t fakeTrack) SSRC() uint32                    { return 1234 }
+func (t fakeTrack) SSRC() uint32                    { return t.ssrc }
 func (t fakeTrack) ClockRate() uint32               { return 48000 }
 func (t fakeTrack) MimeType() string                { return "audio/opus" }
 func (t fakeTrack) SetReadDeadline(time.Time) error { return nil }
