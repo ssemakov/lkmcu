@@ -38,8 +38,9 @@ func (p *fakeTP) Stop() {
 func (p *fakeTP) Render(time.Time) {}
 
 type fakeTrack struct {
-	id   string
-	ssrc uint32
+	id       string
+	ssrc     uint32
+	mimeType string
 }
 
 func (t fakeTrack) ID() string                      { return t.id }

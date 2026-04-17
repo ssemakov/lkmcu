@@ -125,6 +125,32 @@ func TestDefaultTrackPipelineFactory_NewTrackPipeline_DefaultConfigFallback(t *t
 	}
 }
 
+func TestDefaultTrackPipelineFactory_NewTrackPipeline_CodecFactoryFallback(t *testing.T) {
+	factory := &DefaultTrackPipelineFactory{
+		Ctx:    context.Background(),
+		Logger: logging.NewNullLogger("test", "null"),
+		// nil CodecFactory should fall back to DefaultCodecFactory
+		CodecFactory: nil,
+	}
+
+	pipeline, err := factory.NewTrackPipeline(fakeTrack{id: "t1", mimeType: "audio/opus"}, fakeReceiver{})
+	if err != nil {
+		t.Fatalf("NewTrackPipeline() error = %v", err)
+	}
+
+	got, ok := pipeline.(*trackPipeline)
+	if !ok {
+		t.Fatalf("expected *trackPipeline, got %T", pipeline)
+	}
+
+	if _, ok := got.depaketizer.(*depaketizers.OpusDepaketizer); !ok {
+		t.Fatalf("expected DefaultDepaketizer, got %T", got.depaketizer)
+	}
+	if _, ok := got.decoder.(*decoders.OpusDecoder); !ok {
+		t.Fatalf("expected DefaultDecoder, got %T", got.decoder)
+	}
+}
+
 func TestTrackPipeline_StartLoops(t *testing.T) {
 	t.Run("rtp loop continues on timeout", func(t *testing.T) {
 		ctx := context.Background()
