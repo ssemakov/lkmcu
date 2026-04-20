@@ -455,3 +455,22 @@ func (r *ControllableRTPReceiver) SetDeadlineCalls() int32 {
 func (r *ControllableRTPReceiver) ReadCalls() int32 {
 	return atomic.LoadInt32(&r.readCalls)
 }
+
+// StopErrorReceiver returns an error on Stop() to simulate a failure in the receiver's Stop method
+type StopErrorReceiver struct {
+	StopReceiver *StopReceiver
+	Err          error
+}
+
+func (r *StopErrorReceiver) Stop() error {
+	r.StopReceiver.Stop() // preserve all StopReceiver behavior (including call counting and blocking until release)
+	return r.Err
+}
+
+func (r *StopErrorReceiver) ReadSenderReports() ([]packet.SenderReport, error) {
+	return r.StopReceiver.ReadSenderReports()
+}
+
+func (r *StopErrorReceiver) SetReadDeadline(t time.Time) error {
+	return r.StopReceiver.SetReadDeadline(t)
+}

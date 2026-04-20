@@ -14,7 +14,8 @@ import (
 	"github.com/ssemakov/lkmcu/internal/media/packet"
 	processortestuitl "github.com/ssemakov/lkmcu/internal/media/processor/testutil"
 	"github.com/ssemakov/lkmcu/internal/metrics"
-	testutil "github.com/ssemakov/lkmcu/internal/testutil"
+	"github.com/ssemakov/lkmcu/internal/testutil"
+	// testutil "github.com/ssemakov/lkmcu/internal/testutil"
 )
 
 type noopBuffer struct{}
@@ -426,6 +427,68 @@ func TestTrackPipeline_Stop(t *testing.T) {
 			t.Fatalf("expected receiver.Stop() to be called once, got %d", got)
 		}
 	})
+
+	t.Run("tolerates receiver Stop failure and still waits for goroutines", func(t *testing.T) {
+		track, receiver := testutil.MakeStopTrackAndReceiver(false)
+
+		failingReceiver := testutil.StopErrorReceiver{
+			StopReceiver: receiver,
+			Err:          errors.New("stop failed"),
+		}
+
+		factory := &DefaultTrackPipelineFactory{
+			Ctx: context.Background(),
+			Config: TrackPipelineConfig{
+				RTPReadDeadline:  10 * time.Second,
+				RTCPReadDeadline: 10 * time.Second,
+			},
+			Logger: logging.NewNullLogger("test", "null"),
+			Mapper: newTestMapper(),
+			Buffer: noopBuffer{},
+		}
+
+		p, err := factory.NewTrackPipeline(track, &failingReceiver)
+
+		if err != nil {
+			t.Fatalf("NewTrackPipeline() error = %v", err)
+		}
+
+		p.Start()
+
+		waitForSignal(t, "ReadRTP started", track.ReadStarted(), 250*time.Millisecond)
+		waitForSignal(t, "ReadRTCP started", failingReceiver.StopReceiver.ReadStarted(), 250*time.Microsecond)
+
+		stopDone := make(chan struct{})
+		go func() {
+			p.Stop()
+			close(stopDone)
+		}()
+
+		waitForSignal(t, "receiver Stop called", failingReceiver.StopReceiver.StopCalled(), 250*time.Microsecond)
+
+		select {
+		case <-stopDone:
+			t.Fatal("Stop() returned before reader gorutiness were released")
+		case <-time.After(40 * time.Millisecond):
+			// expected: Stop should still be blocked
+		}
+
+		track.Release()
+		failingReceiver.StopReceiver.Release()
+
+		select {
+		case <-stopDone:
+			// expected: Stop returned once readers were released
+		case <-time.After(250 * time.Millisecond):
+			t.Fatal("Stop() did not return after readers were released")
+		}
+
+		if got := failingReceiver.StopReceiver.StopCalls(); got != 1 {
+			t.Fatalf("expected receiver.Stop() to be called once got %d", got)
+		}
+	})
+
+	t.Run("tolerates multiple Stop calls", func(t *testing.T) {})
 }
 
 func TestTrackPipeline_HandleRTP(t *testing.T) {
