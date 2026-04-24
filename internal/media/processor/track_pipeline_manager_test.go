@@ -85,27 +85,25 @@ func TestTrackPipelineManager_NewTrackPipeline(t *testing.T) {
 	}
 }
 
-func TestTrackPipelineManager_RemoveTrackPipeline_NotFound(t *testing.T) {
+func TestTrackPipelineManager_RemoveTrackPipeline_MultipleCalls(t *testing.T) {
 	m := NewTrackPipelineManagerWithFactory(&fakeTPFactory{pipeline: &fakeTP{}}).(*trackPipelineManager)
-
-	expected := "track pipeline not found for track ID: missing"
-	if err := m.RemoveTrackPipeline("missing"); err == nil || err.Error() != expected {
-		t.Fatalf("RemoveTrackPipeline() error = %v, want %q", err, expected)
-	}
-}
-
-func TestTrackPipelineManager_RemoveTrackPipeline(t *testing.T) {
 	p := &fakeTP{}
-	m := NewTrackPipelineManagerWithFactory(&fakeTPFactory{pipeline: p}).(*trackPipelineManager)
 	m.pipelines["t1"] = p
 
 	if err := m.RemoveTrackPipeline("t1"); err != nil {
 		t.Fatalf("RemoveTrackPipeline() error = %v", err)
 	}
-	if p.stopCalled != 1 {
-		t.Fatalf("Stop() calls = %d, want 1", p.stopCalled)
-	}
+
 	if _, ok := m.pipelines["t1"]; ok {
 		t.Fatal("pipeline t1 should be deleted after successful Stop")
+	}
+
+	expected := "track pipeline not found"
+	if err := m.RemoveTrackPipeline("missing"); err == nil || err.Error() != expected {
+		t.Fatalf("RemoveTrackPipeline() error = %v, want %q", err, expected)
+	}
+
+	if p.stopCalled != 1 {
+		t.Fatalf("Stop() calls = %d, want 1", p.stopCalled)
 	}
 }

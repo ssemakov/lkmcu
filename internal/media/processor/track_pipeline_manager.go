@@ -33,6 +33,8 @@ type trackPipelineManager struct {
 	mu     sync.Mutex
 }
 
+var ErrPipekNotFound = errors.New("track pipeline not found")
+
 // NewTrackPipelineManager creates a new instance of trackPipelineManager with the provided factory.
 // factory - A TrackPipelineFactory used to create new track pipelines.
 func NewTrackPipelineManager(l logging.Logger, ctx context.Context) TrackPipelineManager {
@@ -90,7 +92,7 @@ func (m *trackPipelineManager) RemoveTrackPipeline(trackID string) error {
 
 	pipeline, ok := m.pipelines[trackID]
 	if !ok {
-		return errors.New("track pipeline not found for track ID: " + trackID)
+		return ErrPipekNotFound
 	}
 
 	pipeline.Stop()

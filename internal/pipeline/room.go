@@ -171,3 +171,21 @@ func (rs *RoomSnapshot) UpsertSubCache(tid string, action DecisionAction) {
 func (rs *RoomSnapshot) RemoveSubCache(tid string) {
 	delete(rs.CurrentSubs, tid)
 }
+
+// Return all participant tracks to which we are subscribed
+func (rs *RoomSnapshot) ParticipantTracks(pid string) ([]string, error) {
+	p, ok := rs.Participants[pid]
+	if !ok {
+		return nil, fmt.Errorf("ParticipantTracks for unknown participant %s", pid)
+	}
+	tracks := p.PublishedTracks
+	subs := make([]string, 0, len(tracks))
+
+	for tid, _ := range tracks {
+		if rs.CurrentSubs[tid] != Paused {
+			subs = append(subs, tid)
+		}
+	}
+
+	return subs, nil
+}

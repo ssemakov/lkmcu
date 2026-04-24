@@ -487,8 +487,6 @@ func TestTrackPipeline_Stop(t *testing.T) {
 			t.Fatalf("expected receiver.Stop() to be called once got %d", got)
 		}
 	})
-
-	t.Run("tolerates multiple Stop calls", func(t *testing.T) {})
 }
 
 func TestTrackPipeline_HandleRTP(t *testing.T) {
