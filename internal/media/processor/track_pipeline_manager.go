@@ -38,22 +38,22 @@ var ErrPipekNotFound = errors.New("track pipeline not found")
 // NewTrackPipelineManager creates a new instance of trackPipelineManager with the provided factory.
 // factory - A TrackPipelineFactory used to create new track pipelines.
 func NewTrackPipelineManager(l logging.Logger, ctx context.Context) TrackPipelineManager {
-	clock_mapper := clock.NewClockMapper(metrics.NewMetrics(), l, clock.DefaultClockMapperConfig())
+	clockMapper := clock.NewClockMapper(metrics.NewMetrics(), l, clock.DefaultClockMapperConfig())
 	// ToDo: pass onOverflowHandler
-	buffer := jitter_buffer.NewBuffer(clock_mapper, l, jitter_buffer.DefaultConfig(), nil)
+	buffer := jitter_buffer.NewBuffer(clockMapper, l, jitter_buffer.DefaultConfig(), nil)
 
 	tpm := trackPipelineManager{
 		factory: &DefaultTrackPipelineFactory{
 			Logger:       l,
 			Ctx:          ctx,
 			Config:       DefaultTrackPipelineConfig(),
-			Mapper:       clock_mapper,
+			Mapper:       clockMapper,
 			Buffer:       buffer,
 			CodecFactory: &media.DefaultCodecFactory{},
 		},
 		pipelines: make(map[string]TrackPipeline),
 		buffer:    &buffer,
-		mapper:    clock_mapper,
+		mapper:    clockMapper,
 		logger:    l,
 		ctx:       ctx,
 	}
