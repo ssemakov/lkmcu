@@ -1,3 +1,7 @@
+// Package pipeline coordinates LiveKit room events, subscription policy, and
+// the layout view to drive per-track media pipelines. The Agent consumes
+// system events, maintains a room snapshot, and reconciles active track
+// pipelines against the current layout.
 package pipeline
 
 import (
