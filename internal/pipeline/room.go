@@ -181,7 +181,7 @@ func (rs *RoomSnapshot) ParticipantTracks(pid string) ([]string, error) {
 	tracks := p.PublishedTracks
 	subs := make([]string, 0, len(tracks))
 
-	for tid, _ := range tracks {
+	for tid := range tracks {
 		if rs.CurrentSubs[tid] != Paused {
 			subs = append(subs, tid)
 		}
