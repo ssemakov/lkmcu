@@ -7,7 +7,6 @@ import (
 
 	"github.com/ssemakov/lkmcu/internal/logging"
 	"github.com/ssemakov/lkmcu/internal/metrics"
-	"github.com/ssemakov/lkmcu/internal/testutil"
 )
 
 func newTestMapper(cfg *ClockMapperConfig) *ClockMapper {
@@ -29,7 +28,7 @@ func TestMapper_RTPWrapExtension(t *testing.T) {
 
 	baseRTP := uint32(0xFFFFFF00)
 	baseNTP := 1000.0
-	hi, lo := testutil.ToNTPParts(baseNTP)
+	hi, lo := ToNTPParts(baseNTP)
 	if err := cm.UpdateFromSR(ssrc, baseRTP, hi, lo); err != nil {
 		t.Fatalf("UpdateFromSR(base) err: %v", err)
 	}
@@ -75,7 +74,7 @@ func TestMapper_OutOfOrderSRSuppression(t *testing.T) {
 	// First SR
 	ntp1 := 1000.0
 	rtp1 := uint32(100000)
-	hi1, lo1 := testutil.ToNTPParts(ntp1)
+	hi1, lo1 := ToNTPParts(ntp1)
 	if err := cm.UpdateFromSR(ssrc, rtp1, hi1, lo1); err != nil {
 		t.Fatalf("UpdateFromSR #1 err: %v", err)
 	}
@@ -84,7 +83,7 @@ func TestMapper_OutOfOrderSRSuppression(t *testing.T) {
 	// Out-of-order SR with older NTP should be ignored
 	ntp0 := 999.0
 	rtp0 := uint32(90000)
-	hi0, lo0 := testutil.ToNTPParts(ntp0)
+	hi0, lo0 := ToNTPParts(ntp0)
 	if err := cm.UpdateFromSR(ssrc, rtp0, hi0, lo0); err != nil {
 		t.Fatalf("UpdateFromSR ooo err: %v", err)
 	}
@@ -120,7 +119,7 @@ func TestMapper_DiscontinuityDetection(t *testing.T) {
 			// Initial SR (baseline)
 			ntp1 := 1000.0
 			rtp1 := uint32(0)
-			hi1, lo1 := testutil.ToNTPParts(ntp1)
+			hi1, lo1 := ToNTPParts(ntp1)
 			if err := cm.UpdateFromSR(ssrc, rtp1, hi1, lo1); err != nil {
 				t.Fatalf("UpdateFromSR #1 err: %v", err)
 			}
@@ -129,7 +128,7 @@ func TestMapper_DiscontinuityDetection(t *testing.T) {
 			rtp2 := uint32(clockRate * 1)
 			predicted := ntp1 + 1.0
 			ntp2 := predicted + tt.deltaMs/1000.0
-			hi2, lo2 := testutil.ToNTPParts(ntp2)
+			hi2, lo2 := ToNTPParts(ntp2)
 			if err := cm.UpdateFromSR(ssrc, rtp2, hi2, lo2); err != nil {
 				t.Fatalf("UpdateFromSR #2 err: %v", err)
 			}
@@ -157,7 +156,7 @@ func TestMapper_SRTimeoutDegraded(t *testing.T) {
 
 	// Initial SR
 	ntp1 := 1000.0
-	hi1, lo1 := testutil.ToNTPParts(ntp1)
+	hi1, lo1 := ToNTPParts(ntp1)
 	if err := cm.UpdateFromSR(ssrc, 0, hi1, lo1); err != nil {
 		t.Fatalf("UpdateFromSR err: %v", err)
 	}
@@ -188,7 +187,7 @@ func TestMapper_SRTimeoutMeasuredFromLatestAcceptedSR(t *testing.T) {
 	// First SR anchors the clock.
 	ntp1 := 1000.0
 	rtp1 := uint32(0)
-	hi1, lo1 := testutil.ToNTPParts(ntp1)
+	hi1, lo1 := ToNTPParts(ntp1)
 	if err := cm.UpdateFromSR(ssrc, rtp1, hi1, lo1); err != nil {
 		t.Fatalf("UpdateFromSR #1 err: %v", err)
 	}
@@ -202,7 +201,7 @@ func TestMapper_SRTimeoutMeasuredFromLatestAcceptedSR(t *testing.T) {
 	// Second stable SR should refresh the SR age origin.
 	rtp2 := uint32(clockRate)
 	ntp2 := ntp1 + 1.0
-	hi2, lo2 := testutil.ToNTPParts(ntp2)
+	hi2, lo2 := ToNTPParts(ntp2)
 	if err := cm.UpdateFromSR(ssrc, rtp2, hi2, lo2); err != nil {
 		t.Fatalf("UpdateFromSR #2 err: %v", err)
 	}
@@ -244,13 +243,13 @@ func TestMapper_MonotonicGuard_SmallBackstep(t *testing.T) {
 
 	// Baseline SR1
 	baseNTP := 1000.0
-	hi1, lo1 := testutil.ToNTPParts(baseNTP)
+	hi1, lo1 := ToNTPParts(baseNTP)
 	if err := cm.UpdateFromSR(ssrc, 0, hi1, lo1); err != nil {
 		t.Fatalf("UpdateFromSR #1 err: %v", err)
 	}
 	// SR2 consistent at +1s to clear degraded
 	r2 := uint32(clockRate * 1)
-	hi2, lo2 := testutil.ToNTPParts(baseNTP + 1.0)
+	hi2, lo2 := ToNTPParts(baseNTP + 1.0)
 	if err := cm.UpdateFromSR(ssrc, r2, hi2, lo2); err != nil {
 		t.Fatalf("UpdateFromSR #2 err: %v", err)
 	}
@@ -261,7 +260,7 @@ func TestMapper_MonotonicGuard_SmallBackstep(t *testing.T) {
 		t.Fatalf("RTPToNTP #1 err: %v", err)
 	}
 	// SR3: small backstep of 5ms at same RTP base (no discontinuity)
-	hi3, lo3 := testutil.ToNTPParts(got1 - 0.005)
+	hi3, lo3 := ToNTPParts(got1 - 0.005)
 	if err := cm.UpdateFromSR(ssrc, r3, hi3, lo3); err != nil {
 		t.Fatalf("UpdateFromSR #3 err: %v", err)
 	}
@@ -289,13 +288,13 @@ func TestMapper_MonotonicGuard_LargeBackstep(t *testing.T) {
 
 	// Baseline SR1
 	baseNTP := 1000.0
-	hi1, lo1 := testutil.ToNTPParts(baseNTP)
+	hi1, lo1 := ToNTPParts(baseNTP)
 	if err := cm.UpdateFromSR(ssrc, 0, hi1, lo1); err != nil {
 		t.Fatalf("UpdateFromSR #1 err: %v", err)
 	}
 	// SR2 consistent to clear degraded
 	r2 := uint32(clockRate * 1)
-	hi2, lo2 := testutil.ToNTPParts(baseNTP + 1.0)
+	hi2, lo2 := ToNTPParts(baseNTP + 1.0)
 	if err := cm.UpdateFromSR(ssrc, r2, hi2, lo2); err != nil {
 		t.Fatalf("UpdateFromSR #2 err: %v", err)
 	}
@@ -306,7 +305,7 @@ func TestMapper_MonotonicGuard_LargeBackstep(t *testing.T) {
 		t.Fatalf("RTPToNTP err: %v", err)
 	}
 	// SR3: large backstep of 100ms at same base rtp (should not trigger SR discontinuity)
-	hi3, lo3 := testutil.ToNTPParts(last - 0.100)
+	hi3, lo3 := ToNTPParts(last - 0.100)
 	if err := cm.UpdateFromSR(ssrc, r3, hi3, lo3); err != nil {
 		t.Fatalf("UpdateFromSR #3 err: %v", err)
 	}

@@ -12,10 +12,7 @@ import (
 	"github.com/ssemakov/lkmcu/internal/media/depaketizers"
 	"github.com/ssemakov/lkmcu/internal/media/jitter_buffer"
 	"github.com/ssemakov/lkmcu/internal/media/packet"
-	processortestuitl "github.com/ssemakov/lkmcu/internal/media/processor/testutil"
 	"github.com/ssemakov/lkmcu/internal/metrics"
-	"github.com/ssemakov/lkmcu/internal/testutil"
-	// testutil "github.com/ssemakov/lkmcu/internal/testutil"
 )
 
 type noopBuffer struct{}
@@ -155,9 +152,9 @@ func TestDefaultTrackPipelineFactory_NewTrackPipeline_CodecFactoryFallback(t *te
 func TestTrackPipeline_StartLoops(t *testing.T) {
 	t.Run("rtp loop continues on timeout", func(t *testing.T) {
 		ctx := context.Background()
-		track, receiver, err := testutil.MakeRTPTrackAndReceiver(
-			testutil.TimeoutRTPTrack,
-			testutil.EOFReceiver,
+		track, receiver, err := MakeRTPTrackAndReceiver(
+			TimeoutRTPTrack,
+			EOFReceiver,
 		)
 		if err != nil {
 			t.Fatalf("MakeTimeoutRTPTrackPipeline() error = %v", err)
@@ -183,9 +180,9 @@ func TestTrackPipeline_StartLoops(t *testing.T) {
 
 	t.Run("rtcp loop continues on timeout", func(t *testing.T) {
 		ctx := context.Background()
-		track, receiver, err := testutil.MakeRTPTrackAndReceiver(
-			testutil.TimeoutRTPTrack,
-			testutil.TimeoutReceiver,
+		track, receiver, err := MakeRTPTrackAndReceiver(
+			TimeoutRTPTrack,
+			TimeoutReceiver,
 		)
 		if err != nil {
 			t.Fatalf("MakeTimeoutRTPTrackPipeline() error = %v", err)
@@ -212,29 +209,29 @@ func TestTrackPipeline_StartLoops(t *testing.T) {
 	t.Run("loops stop on expected closure errors", func(t *testing.T) {
 		testCases := []struct {
 			name         string
-			trackType    testutil.TestTrack
-			receiverType testutil.TestReceiver
+			trackType    TestTrack
+			receiverType TestReceiver
 		}{
 			{
 				name:         "io.EOF",
-				trackType:    testutil.EOFRTPTrack,
-				receiverType: testutil.EOFReceiver,
+				trackType:    EOFRTPTrack,
+				receiverType: EOFReceiver,
 			},
 			{
 				name:         "io.ErrClosedPipe",
-				trackType:    testutil.ClosedPipeRTPTrack,
-				receiverType: testutil.ClosedPipeReceiver,
+				trackType:    ClosedPipeRTPTrack,
+				receiverType: ClosedPipeReceiver,
 			},
 			{
 				name:         "context.Canceled",
-				trackType:    testutil.CanceledRTPTrack,
-				receiverType: testutil.CanceledReceiver,
+				trackType:    CanceledRTPTrack,
+				receiverType: CanceledReceiver,
 			},
 		}
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
-				track, receiver, err := testutil.MakeRTPTrackAndReceiver(
+				track, receiver, err := MakeRTPTrackAndReceiver(
 					tc.trackType,
 					tc.receiverType,
 				)
@@ -276,9 +273,9 @@ func TestTrackPipeline_StartLoops(t *testing.T) {
 	})
 
 	t.Run("loops stop on unexpected errors", func(t *testing.T) {
-		track, receiver, err := testutil.MakeRTPTrackAndReceiver(
-			testutil.UnexpectedErrRTPTrack,
-			testutil.UnexpectedErrReceiver,
+		track, receiver, err := MakeRTPTrackAndReceiver(
+			UnexpectedErrRTPTrack,
+			UnexpectedErrReceiver,
 		)
 		if err != nil {
 			t.Fatalf("MakeRTPTrackAndReceiver() error = %v", err)
@@ -317,7 +314,7 @@ func TestTrackPipeline_StartLoops(t *testing.T) {
 
 func TestTrackPipeline_Stop(t *testing.T) {
 	t.Run("cancels context and unblocks readers", func(t *testing.T) {
-		track, receiver := testutil.MakeStopTrackAndReceiver(
+		track, receiver := MakeStopTrackAndReceiver(
 			true,
 		)
 
@@ -375,7 +372,7 @@ func TestTrackPipeline_Stop(t *testing.T) {
 	})
 
 	t.Run("stops receiver and waits for goroutines", func(t *testing.T) {
-		track, receiver := testutil.MakeStopTrackAndReceiver(
+		track, receiver := MakeStopTrackAndReceiver(
 			false,
 		)
 
@@ -429,9 +426,9 @@ func TestTrackPipeline_Stop(t *testing.T) {
 	})
 
 	t.Run("tolerates receiver Stop failure and still waits for goroutines", func(t *testing.T) {
-		track, receiver := testutil.MakeStopTrackAndReceiver(false)
+		track, receiver := MakeStopTrackAndReceiver(false)
 
-		failingReceiver := testutil.StopErrorReceiver{
+		failingReceiver := StopErrorReceiver{
 			StopReceiver: receiver,
 			Err:          errors.New("stop failed"),
 		}
@@ -492,7 +489,7 @@ func TestTrackPipeline_Stop(t *testing.T) {
 func TestTrackPipeline_HandleRTP(t *testing.T) {
 	t.Run("deadline error", func(t *testing.T) {
 		wantErr := errors.New("set deadline failed")
-		track := testutil.NewHandleRTPTrack("t1", packet.Packet{}, wantErr, nil)
+		track := NewHandleRTPTrack("t1", packet.Packet{}, wantErr, nil)
 		p := &trackPipeline{
 			track:  track,
 			buffer: noopBuffer{},
@@ -511,7 +508,7 @@ func TestTrackPipeline_HandleRTP(t *testing.T) {
 
 	t.Run("read error", func(t *testing.T) {
 		wantErr := errors.New("read rtp failed")
-		track := testutil.NewHandleRTPTrack("t1", packet.Packet{}, nil, wantErr)
+		track := NewHandleRTPTrack("t1", packet.Packet{}, nil, wantErr)
 		p := &trackPipeline{
 			track:  track,
 			buffer: noopBuffer{},
@@ -529,7 +526,7 @@ func TestTrackPipeline_HandleRTP(t *testing.T) {
 	})
 
 	t.Run("success path", func(t *testing.T) {
-		track := testutil.NewHandleRTPTrack("t1", packet.Packet{}, nil, nil)
+		track := NewHandleRTPTrack("t1", packet.Packet{}, nil, nil)
 		p := &trackPipeline{
 			track:  track,
 			buffer: noopBuffer{},
@@ -552,7 +549,7 @@ func TestTrackPipeline_HandleRTP(t *testing.T) {
 func TestTrackPipeline_HandleRTCP(t *testing.T) {
 	t.Run("deadline error", func(t *testing.T) {
 		wantErr := errors.New("set deadline failed")
-		receiver := testutil.NewControllableRTPReceiver(nil, wantErr, nil)
+		receiver := NewControllableRTPReceiver(nil, wantErr, nil)
 		p := &trackPipeline{
 			track:    fakeTrack{id: "t1"},
 			receiver: receiver,
@@ -571,7 +568,7 @@ func TestTrackPipeline_HandleRTCP(t *testing.T) {
 
 	t.Run("read error", func(t *testing.T) {
 		wantErr := errors.New("read rtcp failed")
-		receiver := testutil.NewControllableRTPReceiver(nil, nil, wantErr)
+		receiver := NewControllableRTPReceiver(nil, nil, wantErr)
 		p := &trackPipeline{
 			track:    fakeTrack{id: "t1"},
 			receiver: receiver,
@@ -589,7 +586,7 @@ func TestTrackPipeline_HandleRTCP(t *testing.T) {
 	})
 
 	t.Run("success path", func(t *testing.T) {
-		receiver := testutil.NewControllableRTPReceiver(nil, nil, nil)
+		receiver := NewControllableRTPReceiver(nil, nil, nil)
 		p := &trackPipeline{
 			track:    fakeTrack{id: "t1"},
 			receiver: receiver,
@@ -633,7 +630,7 @@ func TestTrackPipeline_Render(t *testing.T) {
 	t.Run("depaketizes and decodes packets from buffer", func(t *testing.T) {
 		p := &trackPipeline{
 			track:       fakeTrack{id: "t1", ssrc: 1234},
-			buffer:      &processortestuitl.FakeBuffer{},
+			buffer:      &FakeBuffer{},
 			logger:      logging.NewNullLogger("test", "null"),
 			depaketizer: &fakeDepaketizer{},
 			decoder:     &fakeDecoder{},
@@ -659,7 +656,7 @@ func TestTrackPipeline_Render(t *testing.T) {
 		fd := &fakeDepaketizer{}
 		p := &trackPipeline{
 			track:       fakeTrack{id: "t1", ssrc: 1234},
-			buffer:      &processortestuitl.FakeBuffer{},
+			buffer:      &FakeBuffer{},
 			logger:      logging.NewNullLogger("test", "null"),
 			depaketizer: fd,
 			decoder:     &fakeDecoder{},
@@ -692,7 +689,7 @@ func TestTrackPipeline_Render(t *testing.T) {
 		fdec := &fakeDecoder{}
 		p := &trackPipeline{
 			track:       fakeTrack{id: "t1", ssrc: 1234},
-			buffer:      &processortestuitl.FakeBuffer{},
+			buffer:      &FakeBuffer{},
 			logger:      logging.NewNullLogger("test", "null"),
 			depaketizer: fd,
 			decoder:     fdec,
