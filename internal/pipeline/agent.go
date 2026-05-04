@@ -195,25 +195,23 @@ func (a *Agent) applyLiveKitEvent(ev lk.Event) error {
 		a.roomSnap.UpsertParticipant(lkEvt.PID, lkEvt.Identity)
 	case lk.ParticipantLeft:
 		if err := a.removeTrackPipelines(lkEvt.PID); err != nil {
-			return fmt.Errorf("remove track pipelines for participant %s: %w", lkEvt.PID, err)
+			return fmt.Errorf("participant left: remove track pipelines: %w", err)
 		}
 		tids := a.roomSnap.DeleteParticipantAndTracks(lkEvt.PID)
 		for _, tid := range tids {
 			a.roomSnap.RemoveSubCache(tid)
 		}
 	case lk.TrackPublished:
-		_, err := a.roomSnap.UpsertTrack(lkEvt.PID, lkEvt.TID, TrackKind(lkEvt.Kind))
-		if err != nil {
-			return fmt.Errorf("upsert track %s for participant %s: %w", lkEvt.TID, lkEvt.PID, err)
+		if _, err := a.roomSnap.UpsertTrack(lkEvt.PID, lkEvt.TID, TrackKind(lkEvt.Kind)); err != nil {
+			return fmt.Errorf("track published: upsert track %w", err)
 		}
 	case lk.TrackUnpublished:
 		if err := a.removeTrackPipeline(lkEvt.TID); err != nil {
-			return fmt.Errorf("remove track pipeline %s: %w", lkEvt.TID, err)
+			return fmt.Errorf("track unssubscribed: remove track pipeline %s: %w", lkEvt.TID, err)
 		}
 
-		err := a.roomSnap.DeleteTrack(lkEvt.PID, lkEvt.TID)
-		if err != nil {
-			return fmt.Errorf("delete unpublished track %s for participant %s: %w", lkEvt.TID, lkEvt.PID, err)
+		if err := a.roomSnap.DeleteTrack(lkEvt.PID, lkEvt.TID); err != nil {
+			return fmt.Errorf("track unpublished: delete track: %s", err)
 		}
 		a.roomSnap.RemoveSubCache(lkEvt.TID)
 	case lk.TrackSubscribed:
@@ -221,25 +219,25 @@ func (a *Agent) applyLiveKitEvent(ev lk.Event) error {
 		a.roomSnap.UpsertSubCache(lkEvt.TID, DecisionAction(lkEvt.Kind))
 		// TODO audio only for now, we can ignore video tracks until we implement video pipelines
 		if lkEvt.RemoteTrack.Kind() != "audio" {
-			a.cfg.Logger.Infof("currently only audio tracks are supported, ignoring track subscription for track ID: %s, kind: %s",
+			a.cfg.Logger.Infof("track sbuscribed: currently only audio tracks are supported, ignoring track %s of kind %s",
 				lkEvt.TID, lkEvt.RemoteTrack.Kind())
 			return nil
 		}
 		_, err := a.trackPipelineManager.NewTrackPipeline(lkEvt.RemoteTrack, lkEvt.Receiver)
 		if err != nil {
-			return fmt.Errorf("create track pipeline %s: %w", lkEvt.TID, err)
+			return fmt.Errorf("track subscribed: cannot create track pipeline %s: %w", lkEvt.TID, err)
 		}
 	case lk.TrackUnsubscribed:
 		if err := a.removeTrackPipeline(lkEvt.TID); err != nil {
 			return fmt.Errorf("remove track pipeline %s: %w", lkEvt.TID, err)
 		}
-		deleteErr := a.roomSnap.DeleteTrack(lkEvt.PID, lkEvt.TID)
-		if deleteErr != nil {
-			return fmt.Errorf("delete unsubscribed track %s for participant %s: %w", lkEvt.TID, lkEvt.PID, deleteErr)
+
+		if err := a.roomSnap.DeleteTrack(lkEvt.PID, lkEvt.TID); err != nil {
+			return fmt.Errorf("track unsubscribed: %s", err)
 		}
 		a.roomSnap.RemoveSubCache(lkEvt.TID)
 	default:
-		a.cfg.Logger.Debugf("ignoring LiveKit event in RoomChangedEvent: %s", logging.FormatValue(lkEvt))
+		a.cfg.Logger.Debugf("ignoring LiveKit event: %s", logging.FormatValue(lkEvt))
 	}
 
 	return nil
@@ -284,7 +282,6 @@ func (a *Agent) reconcileState(ctx context.Context) {
 
 func (a *Agent) removeTrackPipelines(pid string) error {
 	tids, err := a.roomSnap.ParticipantTracks(pid)
-
 	if err != nil {
 		return err
 	}

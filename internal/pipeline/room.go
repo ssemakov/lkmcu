@@ -64,7 +64,7 @@ func NewRoomSnapshot() *RoomSnapshot {
 	}
 }
 
-// logging Format implementations
+// Format formats string for logger
 func (t *TrackInfo) Format() string {
 	if t == nil {
 		return "<nil>"
@@ -134,7 +134,7 @@ func (rs *RoomSnapshot) DeleteParticipantAndTracks(pid string) []string {
 func (rs *RoomSnapshot) UpsertTrack(pid string, tid string, kind TrackKind) (*TrackInfo, error) {
 	p, ok := rs.Participants[pid]
 	if !ok {
-		return nil, fmt.Errorf("UpsertTrack for unknown participant %s", pid)
+		return nil, fmt.Errorf("upsert track %s, kind %s: unknown participant %s", tid, kind, pid)
 	}
 
 	if t, ok := p.PublishedTracks[tid]; ok {
@@ -154,7 +154,7 @@ func (rs *RoomSnapshot) UpsertTrack(pid string, tid string, kind TrackKind) (*Tr
 func (rs *RoomSnapshot) DeleteTrack(pid string, tid string) error {
 	p, ok := rs.Participants[pid]
 	if !ok {
-		return fmt.Errorf("DeleteTrack for unknown participant %s", pid)
+		return fmt.Errorf("delete track %s: unknown participant %s", tid, pid)
 	}
 	delete(p.PublishedTracks, tid)
 	delete(rs.Tracks, tid)
@@ -162,7 +162,7 @@ func (rs *RoomSnapshot) DeleteTrack(pid string, tid string) error {
 	return nil
 }
 
-// Adds or updates the subscription decision for a track in the snapshot.
+// UpsertSubCache adds or updates the subscription decision for a track in the snapshot.
 func (rs *RoomSnapshot) UpsertSubCache(tid string, action DecisionAction) {
 	rs.CurrentSubs[tid] = action
 }
@@ -172,11 +172,11 @@ func (rs *RoomSnapshot) RemoveSubCache(tid string) {
 	delete(rs.CurrentSubs, tid)
 }
 
-// Return all participant tracks to which we are subscribed
+// ParticipantTracks return all participant tracks to which we are subscribed
 func (rs *RoomSnapshot) ParticipantTracks(pid string) ([]string, error) {
 	p, ok := rs.Participants[pid]
 	if !ok {
-		return nil, fmt.Errorf("ParticipantTracks for unknown participant %s", pid)
+		return nil, fmt.Errorf("participant tracks: unknown participant %s", pid)
 	}
 	tracks := p.PublishedTracks
 	subs := make([]string, 0, len(tracks))
