@@ -40,7 +40,8 @@ func TestDecide(t *testing.T) {
 			},
 			want: []Decision{}, // should skip track with missing info
 		},
-		{name: "track with missing participant",
+		{
+			name:   "track with missing participant",
 			policy: Policy{},
 			layout: &layout.LayoutView{StageTracks: map[string]string{"track1": "p1"}},
 			snapshot: &RoomSnapshot{
@@ -227,55 +228,55 @@ func TestDiff(t *testing.T) {
 			name: "subscribe to new track",
 			cur:  []*livekit.Subscription{},
 			decs: []Decision{
-				{TrackID: "track1", Action: VideoFull, Reason: "video on stage"},
+				{TrackID: "track1", PID: "participant1", Action: VideoFull, Reason: "video on stage"},
 			},
 			want: []Operations{
-				&SubscribeOp{TrackID: "track1", Action: VideoFull, Reason: "video on stage"},
+				&SubscribeOp{TrackID: "track1", PID: "participant1", Action: VideoFull, Reason: "video on stage"},
 			},
 		},
 		{
 			name: "unsubscribe from track",
 			cur: []*livekit.Subscription{
-				{TID: "track1"},
+				{TID: "track1", PID: "participant1"},
 			},
 			decs: []Decision{
-				{TrackID: "track1", Action: Paused, Reason: "not on stage"},
+				{TrackID: "track1", PID: "participant1", Action: Paused, Reason: "not on stage"},
 			},
 			want: []Operations{
-				&UnsubscribeOp{TrackID: "track1", Reason: "not on stage"},
+				&UnsubscribeOp{TrackID: "track1", PID: "participant1", Reason: "not on stage"},
 			},
 		},
 		{
 			name: "no change for already subscribed track",
 			cur: []*livekit.Subscription{
-				{TID: "track1"},
+				{TID: "track1", PID: "participant1"},
 			},
 			decs: []Decision{
-				{TrackID: "track1", Action: VideoFull, Reason: "video on stage"},
+				{TrackID: "track1", PID: "participant1", Action: VideoFull, Reason: "video on stage"},
 			},
 			want: []Operations{},
 		},
 		{
 			name: "mix of subscribe and no change",
 			cur: []*livekit.Subscription{
-				{TID: "track1"},
+				{TID: "track1", PID: "participant1"},
 			},
 			decs: []Decision{
-				{TrackID: "track1", Action: VideoFull, Reason: "video on stage"},
-				{TrackID: "track2", Action: Audio, Reason: "audio on stage"},
+				{TrackID: "track1", PID: "participant1", Action: VideoFull, Reason: "video on stage"},
+				{TrackID: "track2", PID: "participant2", Action: Audio, Reason: "audio on stage"},
 			},
 			want: []Operations{
-				&SubscribeOp{TrackID: "track2", Action: Audio, Reason: "audio on stage"},
+				&SubscribeOp{TrackID: "track2", PID: "participant2", Action: Audio, Reason: "audio on stage"},
 			},
 		},
 		{
 			name: "unsubscribe from track of left participant",
 			cur: []*livekit.Subscription{
-				{TID: "track1"},
+				{TID: "track1", PID: "participant1"},
 			},
 			decs: []Decision{},
 			want: []Operations{
-				&UnsubscribeOp{TrackID: "track1", Reason: "not in decisions / participant left"},
+				&UnsubscribeOp{TrackID: "track1", PID: "participant1", Reason: "not in decisions / participant left"},
 			},
 		},
 	}

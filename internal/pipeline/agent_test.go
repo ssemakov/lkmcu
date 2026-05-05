@@ -135,6 +135,61 @@ func TestAgent_consumeLiveKitEvents_CancelsOnRoomClosed(t *testing.T) {
 	}
 }
 
+func TestAgent_cossumeLiveKitEvents_emitsRoomChangedEvents(t *testing.T) {
+	agent := NewAgent(AgentConfig{
+		Logger: logging.NewNullLogger("test", "info"),
+	}, layout.DefaultLayoutView())
+	mockLkClient := newMockLkClient()
+	agent.lk = mockLkClient
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		agent.consumeLiveKitEvents(ctx, cancel)
+		close(done)
+	}()
+
+	events := []lk.Event{
+		lk.ParticipantJoined{PID: "p1", Identity: "alice"},
+		lk.ParticipantLeft{PID: "p1", Identity: "alice"},
+		lk.TrackPublished{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
+		lk.TrackUnpublished{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
+		lk.TrackSubscribed{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
+		lk.TrackUnsubscribed{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
+	}
+
+	for _, event := range events {
+		mockLkClient.events <- event
+	}
+
+	for _, want := range events {
+		select {
+		case got := <-agent.evCh:
+			roomChanged, ok := got.(RoomChangedEvent)
+			if !ok {
+				t.Fatalf("expected RoomChangedEvent, got %T", got)
+			}
+
+			// RoomChangedEvent returns a slice []lk.Event
+			if diff := cmp.Diff([]lk.Event{want}, roomChanged.LkEvents); diff != "" {
+				t.Fatalf("unexpected LiveKit evnets (-want +got):\n%s", diff)
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("expected RoomChangeEvent")
+		}
+	}
+
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected consumeLiveKitEvents goroutine to exit after cancellation")
+	}
+}
+
 func TestAgent_applyEvent_CancelsOnRoomDisconnected(t *testing.T) {
 	agent := NewAgent(AgentConfig{
 		Logger: logging.NewNullLogger("test", "info"),
@@ -215,6 +270,7 @@ func (m *mockLkClient) Subscribe(pid, tid string, subscribe bool) error {
 	m.subs = append(m.subs, &lk.Subscription{TID: tid, PID: pid})
 	return nil
 }
+
 func (m *mockLkClient) unsubscribe(tid, pid string) error {
 	for i, sub := range m.subs {
 		if sub.TID == tid && sub.PID == pid {
