@@ -320,7 +320,7 @@ func TestAgent_applyEvent(t *testing.T) {
 				if _, ok := a.roomSnap.Tracks["t1"]; ok {
 					t.Fatal("track should be removed after ParticipantLeft")
 				}
-				if _, ok := a.roomSnap.CurrentSubs["t1"]; ok {
+				if _, ok := a.roomSnap.SubCache["t1"]; ok {
 					t.Fatal("subscription cache should be removed after ParticipantLeft")
 				}
 			},
@@ -358,7 +358,7 @@ func TestAgent_applyEvent(t *testing.T) {
 				if _, ok := a.roomSnap.Tracks["t1"]; ok {
 					t.Fatal("track should be removed after TrackUnpublished")
 				}
-				if _, ok := a.roomSnap.CurrentSubs["t1"]; ok {
+				if _, ok := a.roomSnap.SubCache["t1"]; ok {
 					t.Fatal("subscription cache should be removed after TrackUnpublished")
 				}
 			},
@@ -378,7 +378,7 @@ func TestAgent_applyEvent(t *testing.T) {
 			},
 			assert: func(t *testing.T, a *Agent) {
 				t.Helper()
-				if got, ok := a.roomSnap.CurrentSubs["t1"]; !ok || got != DecisionAction("video") {
+				if got, ok := a.roomSnap.SubCache["t1"]; !ok || got != DecisionAction("video") {
 					t.Fatalf("expected current subscription for t1 to be video, got %q (present=%v)", got, ok)
 				}
 			},
@@ -396,7 +396,7 @@ func TestAgent_applyEvent(t *testing.T) {
 				if _, ok := a.roomSnap.Tracks["t1"]; ok {
 					t.Fatal("track should be removed after TrackUnsubscribed")
 				}
-				if _, ok := a.roomSnap.CurrentSubs["t1"]; ok {
+				if _, ok := a.roomSnap.SubCache["t1"]; ok {
 					t.Fatal("subscription cache should be removed after TrackUnsubscribed")
 				}
 			},
@@ -593,7 +593,7 @@ func TestAgent_participantOnStageJoinPublishTrackLeaves(t *testing.T) {
 		t.Fatalf("expected no tracks after ParticipantLeft, got %#v", agent.roomSnap.Tracks)
 	}
 
-	if _, ok := agent.roomSnap.CurrentSubs["t1"]; ok {
+	if _, ok := agent.roomSnap.SubCache["t1"]; ok {
 		t.Fatalf("current subscription cache should be cleared for unsubscribed track")
 	}
 

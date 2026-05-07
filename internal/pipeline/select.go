@@ -153,22 +153,6 @@ func Decide(policy Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []
 	return decs
 }
 
-// func filterCurrentSubs(decisionCandidates []Decision, snapshot *RoomSnapshot) []Decision {
-// 	decs := make([]Decision, 0, len(decisionCandidates))
-
-// 	for _, candidate := range decisionCandidates {
-// 		tid := candidate.TrackID
-// 		desc := candidate.Action
-// 		if _, ok := snapshot.CurrentSubs[tid]; ok && snapshot.CurrentSubs[tid] == desc {
-// 			continue
-// 		}
-
-// 		decs = append(decs, candidate)
-// 	}
-
-// 	return decs
-// }
-
 // Diff converts desired decisions into subscription operations compared to current subscriptions.
 // - cur: current LiveKit subscriptions (TID = trackKey/SID as used by Decide outputs)
 // - decs: target high-level decisions from Decide

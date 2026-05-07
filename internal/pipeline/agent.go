@@ -207,7 +207,7 @@ func (a *Agent) applyLiveKitEvent(ev lk.Event) error {
 		}
 	case lk.TrackUnpublished:
 		if err := a.removeTrackPipeline(lkEvt.TID); err != nil {
-			return fmt.Errorf("track unssubscribed: remove track pipeline %s: %w", lkEvt.TID, err)
+			return fmt.Errorf("track unsubscribed: remove track pipeline %s: %w", lkEvt.TID, err)
 		}
 
 		if err := a.roomSnap.DeleteTrack(lkEvt.PID, lkEvt.TID); err != nil {
@@ -219,7 +219,7 @@ func (a *Agent) applyLiveKitEvent(ev lk.Event) error {
 		a.roomSnap.UpsertSubCache(lkEvt.TID, DecisionAction(lkEvt.Kind))
 		// TODO audio only for now, we can ignore video tracks until we implement video pipelines
 		if lkEvt.RemoteTrack.Kind() != "audio" {
-			a.cfg.Logger.Infof("track sbuscribed: currently only audio tracks are supported, ignoring track %s of kind %s",
+			a.cfg.Logger.Infof("track subscribed: currently only audio tracks are supported, ignoring track %s of kind %s",
 				lkEvt.TID, lkEvt.RemoteTrack.Kind())
 			return nil
 		}
