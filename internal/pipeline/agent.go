@@ -128,11 +128,12 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context, cancel context.CancelF
 			case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished, lk.TrackSubscribed, lk.TrackUnsubscribed:
 				lg.Infof("LiveKit event: %s", logging.FormatValue(e))
 				a.evCh <- RoomChangedEvent{LkEvents: []lk.Event{e}}
-			// TODO coalesce multiple ParticipantJoined/Left, TrackPublished/Unpublished events into one RoomChangedEvent
+			// TODO: coalesce multiple ParticipantJoined/Left, TrackPublished/Unpublished events into one RoomChangedEvent
 			// The idea is to pull as many events as possible from the channel without blocking
 			// and then push a single RoomChangedEvent to the event channel.
 			// This way we avoid excessive reconciliations when many participants join/leave or publish/unpublish tracks at once.
 			// Something like this:
+			// ```
 			// for {
 			// 	select {
 			// 	case e2 := <-a.lk.Events():
@@ -148,6 +149,7 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context, cancel context.CancelF
 			// 		break
 			// 	}
 			// }
+			// ```
 			case lk.RoomDisconnected:
 				lg.Infof("Room disconnected, reason: %v", evt.Reason)
 				cancel()
@@ -178,7 +180,7 @@ func (a *Agent) applyEvent(ev SystemEvent) {
 			}
 		}
 	case LayoutChangedEvent:
-		// TODO consider coasting multiple LayoutChangedEvent into one
+		// TODO: consider coasting multiple LayoutChangedEvent into one
 		if systemEvt.Stage != nil {
 			// Update layout view atomically
 			a.layoutView.UpdateFromStage(systemEvt.Stage)
@@ -215,14 +217,16 @@ func (a *Agent) applyLiveKitEvent(ev lk.Event) error {
 		}
 		a.roomSnap.RemoveSubCache(lkEvt.TID)
 	case lk.TrackSubscribed:
-		// TODO properly convert to video-full, video-low, pause
+		// TODO: properly convert to video-full, video-low, pause
 		a.roomSnap.UpsertSubCache(lkEvt.TID, DecisionAction(lkEvt.Kind))
-		// TODO audio only for now, we can ignore video tracks until we implement video pipelines
+		// TODO: audio only for now, we can ignore video tracks until we implement video pipelines
 		if lkEvt.RemoteTrack.Kind() != "audio" {
 			a.cfg.Logger.Infof("track subscribed: currently only audio tracks are supported, ignoring track %s of kind %s",
 				lkEvt.TID, lkEvt.RemoteTrack.Kind())
 			return nil
 		}
+		// TODO: introduce retry policy and attempt on next reconcile cycle if we failed to crate pipeline.
+		// Look at what are the reasons for possible failure.
 		_, err := a.trackPipelineManager.NewTrackPipeline(lkEvt.RemoteTrack, lkEvt.Receiver)
 		if err != nil {
 			return fmt.Errorf("track subscribed: cannot create track pipeline %s: %w", lkEvt.TID, err)
@@ -251,7 +255,7 @@ func (a *Agent) reconcileState(ctx context.Context) {
 	// Take a snapshot of the layout to avoid holding locks during Decide
 	lSnap := a.layoutView.Snapshot()
 
-	// TODO we may want to add PartialDecide only for dirty set of PID, TID (ones that were added/removed/changed)
+	// TODO: we may want to add PartialDecide only for dirty set of PID, TID (ones that were added/removed/changed)
 	// This can be done after profiler says that Decide is a bottleneck
 	// or we can keep track of dirty PIDs/TIDs in the room snapshot and pass them to Decide
 	// For now we just call full Decide every time
@@ -262,7 +266,7 @@ func (a *Agent) reconcileState(ctx context.Context) {
 	}
 
 	// Compare with current subscriptions
-	// TODO cache for event reconciliation and get the full snapshot on periodic reconciliation
+	// TODO: cache for event reconciliation and get the full snapshot on periodic reconciliation
 	curLk := a.lk.SubscriptionSnapshot()
 	a.cfg.Logger.Debugf("Current LK subscriptions: %v", logging.FormatValue(curLk))
 

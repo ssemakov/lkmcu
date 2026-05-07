@@ -135,7 +135,7 @@ func TestAgent_consumeLiveKitEvents_CancelsOnRoomClosed(t *testing.T) {
 	}
 }
 
-func TestAgent_cossumeLiveKitEvents_emitsRoomChangedEvents(t *testing.T) {
+func TestAgent_TranslatesLiveKitEventsToRoomChangedEvents(t *testing.T) {
 	agent := NewAgent(AgentConfig{
 		Logger: logging.NewNullLogger("test", "info"),
 	}, layout.DefaultLayoutView())

@@ -445,7 +445,6 @@ func TestTrackPipeline_Stop(t *testing.T) {
 		}
 
 		p, err := factory.NewTrackPipeline(track, &failingReceiver)
-
 		if err != nil {
 			t.Fatalf("NewTrackPipeline() error = %v", err)
 		}

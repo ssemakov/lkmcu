@@ -1,3 +1,5 @@
+// Package clock maps RTP media timestamps to wall-clock time using RTCP Sender
+// Reports and per-stream clock state.
 package clock
 
 import (
@@ -90,7 +92,7 @@ func NewClockMapper(metrics *metrics.Metrics, logger logging.Logger, config *Clo
 // RTP timestamp past rollovers, refreshing the (base_rtp, base_ntp) anchor and
 // derived offset/clock-rate state, and resetting monotonic/drift guards when
 // the sender clock jumps so subsequent RTP→NTP conversions stay accurate.
-func (cm *ClockMapper) UpdateFromSR(ssrc uint32, rtpTs, ntpHigh, ntpLow uint32) error {
+func (cm *ClockMapper) UpdateFromSR(ssrc uint32, rtpTS, ntpHigh, ntpLow uint32) error {
 	cm.m.RLock()
 	sc, ok := cm.streamClocks[ssrc]
 	cm.m.RUnlock()
@@ -102,31 +104,31 @@ func (cm *ClockMapper) UpdateFromSR(ssrc uint32, rtpTs, ntpHigh, ntpLow uint32) 
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
-	ntpTsSeconds := float64(ntpHigh) + (float64(ntpLow) / float64(1<<32))
+	ntpTSSeconds := float64(ntpHigh) + (float64(ntpLow) / float64(1<<32))
 
 	// Out-of-order SR guard: compare by NTP
 	// TODO: This out-of-order SR guard skips any SR with an older NTP than baseNTP,
 	// even if its RTP timestamp differs. For now we assume reordering is rare and treat
 	// these as duplicates. In a future version, check both NTP and RTP equality to
 	// distinguish true duplicates from re-ordered or inconsistent SRs.
-	if ntpTsSeconds < sc.baseNTP-cm.cfg.Epsilon.Seconds() {
+	if ntpTSSeconds < sc.baseNTP-cm.cfg.Epsilon.Seconds() {
 		cm.logger.Debugf("ClockMapper: out-of-order SR (older NTP %f < %f) for SSRC=%d; ignoring",
-			ntpTsSeconds, sc.baseNTP, ssrc)
+			ntpTSSeconds, sc.baseNTP, ssrc)
 		return nil
 	}
 
 	switch sc.state {
 	case Uninitialized:
-		cm.logger.Debugf("ClockMapper: anchoring clock for SSRC=%08x with first SR (RTP=%d, NTP=%.6f)", ssrc, rtpTs, ntpTsSeconds)
+		cm.logger.Debugf("ClockMapper: anchoring clock for SSRC=%08x with first SR (RTP=%d, NTP=%.6f)", ssrc, rtpTS, ntpTSSeconds)
 		// anchor the first SR, establishing the initial RTP→NTP mapping, don't degrade or discontinue on first SR
-		sc.Anchor(rtpTs, ntpTsSeconds)
+		sc.Anchor(rtpTS, ntpTSSeconds)
 	case Anchored:
-		cm.logger.Debugf("ClockMapper: locking clock for SSRC=%08x with second SR (RTP=%d, NTP=%.6f)", ssrc, rtpTs, ntpTsSeconds)
+		cm.logger.Debugf("ClockMapper: locking clock for SSRC=%08x with second SR (RTP=%d, NTP=%.6f)", ssrc, rtpTS, ntpTSSeconds)
 		// lock the clock on the second SR, confirming stability of the mapping
 		sc.Lock()
 		fallthrough
 	default:
-		sc.Update(rtpTs, ntpTsSeconds, cm.cfg.DiscontinuityThreshold)
+		sc.Update(rtpTS, ntpTSSeconds, cm.cfg.DiscontinuityThreshold)
 	}
 
 	return nil
@@ -150,7 +152,7 @@ func (cm *ClockMapper) UpdateFromSR(ssrc uint32, rtpTs, ntpHigh, ntpLow uint32) 
 //   - Mapping uninitialized (no valid SR seen for SSRC).
 //   - TODO: Extrapolation required beyond the configured window (degraded), when
 //     clamping is not permitted by configuration.
-func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error) {
+func (cm *ClockMapper) RTPToNTP(ssrc, rtpTS uint32) (float64, MapperState, error) {
 	cm.m.RLock()
 	sc, ok := cm.streamClocks[ssrc]
 	cm.m.RUnlock()
@@ -167,7 +169,7 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 	}
 
 	// predicted NTP
-	ntp := sc.NtpTime(rtpTs)
+	ntp := sc.NtpTime(rtpTS)
 	srAge := time.Since(sc.lastSRReceivedAt)
 
 	state := MapperState{
@@ -235,9 +237,9 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 	return ntp, state, nil
 }
 
-// Same as RTPToNTP but returns Unix time
-func (cm *ClockMapper) RTPToNTPTime(ssrc, rtpTs uint32) (time.Time, MapperState, error) {
-	ntpFloat, state, err := cm.RTPToNTP(ssrc, rtpTs)
+// RTPToNTPTime same as RTPToNTP but returns Unix time
+func (cm *ClockMapper) RTPToNTPTime(ssrc, rtpTS uint32) (time.Time, MapperState, error) {
+	ntpFloat, state, err := cm.RTPToNTP(ssrc, rtpTS)
 	if err != nil && ntpFloat == 0 {
 		return time.Time{}, state, err
 	}
