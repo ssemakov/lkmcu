@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"slices"
+
 	"github.com/ssemakov/lkmcu/internal/layout"
 	"github.com/ssemakov/lkmcu/internal/livekit"
 )
@@ -127,12 +129,7 @@ func Decide(policy Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []
 			onStage = true
 			// or check if the participant is on stage with the given track kind
 		} else if kinds, ok := layout.StageParticipants[pInfo.Identity]; ok {
-			for _, tk := range kinds {
-				if tk == tInfo.Kind.String() {
-					onStage = true
-					break
-				}
-			}
+			onStage = slices.Contains(kinds, tInfo.Kind.String())
 		}
 
 		if !onStage {
