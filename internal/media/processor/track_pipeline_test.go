@@ -3,6 +3,7 @@ package processor
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -25,6 +26,23 @@ func (noopBuffer) Pop(uint32, time.Time) (packet.Packet, bool) { return packet.P
 func (noopBuffer) Occupancy(uint32) time.Duration              { return 0 }
 func (noopBuffer) Target(uint32) time.Duration                 { return 0 }
 func (noopBuffer) Config() *jitter_buffer.Config               { return jitter_buffer.DefaultConfig() }
+
+type recordingBuffer struct {
+	noopBuffer
+
+	ssrc   uint32
+	pkt    packet.Packet
+	status jitter_buffer.Status
+	err    error
+	calls  int
+}
+
+func (b *recordingBuffer) Push(ssrc uint32, pkt packet.Packet) (jitter_buffer.Status, error) {
+	b.calls++
+	b.ssrc = ssrc
+	b.pkt = pkt
+	return b.status, b.err
+}
 
 type fakeDepaketizer struct {
 	depaketizeCount int
@@ -485,6 +503,166 @@ func TestTrackPipeline_Stop(t *testing.T) {
 	})
 }
 
+func TestTrackPipeline_Render(t *testing.T) {
+	t.Run("renders nothing when buffer is empty", func(t *testing.T) {
+		p := &trackPipeline{
+			track:       fakeTrack{id: "t1"},
+			buffer:      noopBuffer{},
+			logger:      logging.NewNullLogger("test", "null"),
+			depaketizer: &fakeDepaketizer{},
+			decoder:     &fakeDecoder{},
+		}
+
+		p.Render(time.Now())
+
+		if got := p.depaketizer.(*fakeDepaketizer).depaketizeCount; got != 0 {
+			t.Fatalf("expected Depaketize not to be called, got %d", got)
+		}
+
+		if got := p.decoder.(*fakeDecoder).acceptCount; got != 0 {
+			t.Fatalf("expected Decoder.Accept not to be called, got %d", got)
+		}
+	})
+
+	t.Run("depaketizes and decodes packets from buffer", func(t *testing.T) {
+		p := &trackPipeline{
+			track:       fakeTrack{id: "t1", ssrc: 1234},
+			buffer:      &FakeBuffer{},
+			logger:      logging.NewNullLogger("test", "null"),
+			depaketizer: &fakeDepaketizer{},
+			decoder:     &fakeDecoder{},
+		}
+
+		// Push a few packets into the buffer
+		p.buffer.Push(1234, packet.Packet{RtpTs: 5678})
+		p.buffer.Push(1234, packet.Packet{RtpTs: 6789})
+		p.buffer.Push(1234, packet.Packet{RtpTs: 7890})
+
+		p.Render(time.Now())
+
+		if got := p.depaketizer.(*fakeDepaketizer).depaketizeCount; got != 3 {
+			t.Fatalf("expected Depaketize to be called three times, got %d", got)
+		}
+
+		if got := p.decoder.(*fakeDecoder).acceptCount; got != 3 {
+			t.Fatalf("expected Decoder.Accept to be called three times, got %d", got)
+		}
+	})
+
+	t.Run("continues rendering packets even if depaketizer returns an error", func(t *testing.T) {
+		fd := &fakeDepaketizer{}
+		p := &trackPipeline{
+			track:       fakeTrack{id: "t1", ssrc: 1234},
+			buffer:      &FakeBuffer{},
+			logger:      logging.NewNullLogger("test", "null"),
+			depaketizer: fd,
+			decoder:     &fakeDecoder{},
+		}
+
+		p.buffer.Push(1234, packet.Packet{RtpTs: 5678})
+		p.buffer.Push(1234, packet.Packet{RtpTs: 6789})
+
+		// Make the depaketizer return an error on the second packet
+		fd.depaketizeFn = func(pkt packet.Packet) (depaketizers.EncodedUnit, error) {
+			if fd.depaketizeCount == 1 {
+				return nil, errors.New("depaketize error")
+			}
+			return nil, nil
+		}
+
+		p.Render(time.Now())
+
+		if got := fd.depaketizeCount; got != 2 {
+			t.Fatalf("expected Depaketize to be called once (including the error case), got %d", got)
+		}
+
+		if got := p.decoder.(*fakeDecoder).acceptCount; got != 1 {
+			t.Fatalf("expected Decoder.Accept to be called twice (only for successful depaketizations), got %d", got)
+		}
+	})
+
+	t.Run("continues rendering packets even if decoder returns an error", func(t *testing.T) {
+		fd := &fakeDepaketizer{}
+		fdec := &fakeDecoder{}
+		p := &trackPipeline{
+			track:       fakeTrack{id: "t1", ssrc: 1234},
+			buffer:      &FakeBuffer{},
+			logger:      logging.NewNullLogger("test", "null"),
+			depaketizer: fd,
+			decoder:     fdec,
+		}
+
+		p.buffer.Push(1234, packet.Packet{RtpTs: 5678})
+		p.buffer.Push(1234, packet.Packet{RtpTs: 6789})
+
+		fdec.acceptCount = 0
+		fdec.acceptFn = func(depaketizers.EncodedUnit) error {
+			if fdec.acceptCount == 1 {
+				return errors.New("decode error")
+			}
+			return nil
+		}
+
+		p.Render(time.Now())
+
+		if got := fd.depaketizeCount; got != 2 {
+			t.Fatalf("expected Depaketize to be called twice, got %d", got)
+		}
+
+		if got := fdec.acceptCount; got != 2 {
+			t.Fatalf("expected Decoder.Accept to be called twice (including the error case), got %d", got)
+		}
+	})
+}
+
+func TestTrackPipeline_onRTP(t *testing.T) {
+	t.Run("passes exact packet and SSRC to buffer", func(t *testing.T) {
+		buf := &recordingBuffer{status: jitter_buffer.StatusAccepted}
+		p := &trackPipeline{
+			track:  fakeTrack{id: "t1", ssrc: 1234},
+			buffer: buf,
+			logger: logging.NewNullLogger("test", "null"),
+		}
+		pkt := packet.Packet{
+			RtpTs:   5678,
+			Seq:     42,
+			Payload: packet.PacketPayload{1, 2, 3},
+		}
+
+		if err := p.onRTP(pkt); err != nil {
+			t.Fatalf("onRTP() error = %v", err)
+		}
+
+		if buf.calls != 1 {
+			t.Fatalf("expected buffer Push to be called once, got %d", buf.calls)
+		}
+		if buf.ssrc != 1234 {
+			t.Fatalf("expected SSRC 1234, got %d", buf.ssrc)
+		}
+		if buf.pkt.RtpTs != pkt.RtpTs || buf.pkt.Seq != pkt.Seq || !slices.Equal(buf.pkt.Payload, pkt.Payload) {
+			t.Fatalf("buffer got packet %+v, want %+v", buf.pkt, pkt)
+		}
+	})
+
+	t.Run("propagates buffer errors", func(t *testing.T) {
+		wantErr := errors.New("buffer push failed")
+		buf := &recordingBuffer{
+			status: jitter_buffer.StatusAccepted,
+			err:    wantErr,
+		}
+		p := &trackPipeline{
+			track:  fakeTrack{id: "t1", ssrc: 1234},
+			buffer: buf,
+			logger: logging.NewNullLogger("test", "null"),
+		}
+
+		err := p.onRTP(packet.Packet{RtpTs: 5678})
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("onRTP() error = %v, want %v", err, wantErr)
+		}
+	})
+}
+
 func TestTrackPipeline_HandleRTP(t *testing.T) {
 	t.Run("deadline error", func(t *testing.T) {
 		wantErr := errors.New("set deadline failed")
@@ -601,118 +779,6 @@ func TestTrackPipeline_HandleRTCP(t *testing.T) {
 		}
 		if got := receiver.ReadCalls(); got != 1 {
 			t.Fatalf("expected ReadRTCP to be called once, got %d", got)
-		}
-	})
-}
-
-func TestTrackPipeline_Render(t *testing.T) {
-	t.Run("renders nothing when buffer is empty", func(t *testing.T) {
-		p := &trackPipeline{
-			track:       fakeTrack{id: "t1"},
-			buffer:      noopBuffer{},
-			logger:      logging.NewNullLogger("test", "null"),
-			depaketizer: &fakeDepaketizer{},
-			decoder:     &fakeDecoder{},
-		}
-
-		p.Render(time.Now())
-
-		if got := p.depaketizer.(*fakeDepaketizer).depaketizeCount; got != 0 {
-			t.Fatalf("expected Depaketize not to be called, got %d", got)
-		}
-
-		if got := p.decoder.(*fakeDecoder).acceptCount; got != 0 {
-			t.Fatalf("expected Decoder.Accept not to be called, got %d", got)
-		}
-	})
-
-	t.Run("depaketizes and decodes packets from buffer", func(t *testing.T) {
-		p := &trackPipeline{
-			track:       fakeTrack{id: "t1", ssrc: 1234},
-			buffer:      &FakeBuffer{},
-			logger:      logging.NewNullLogger("test", "null"),
-			depaketizer: &fakeDepaketizer{},
-			decoder:     &fakeDecoder{},
-		}
-
-		// Push a few packets into the buffer
-		p.buffer.Push(1234, packet.Packet{RtpTs: 5678})
-		p.buffer.Push(1234, packet.Packet{RtpTs: 6789})
-		p.buffer.Push(1234, packet.Packet{RtpTs: 7890})
-
-		p.Render(time.Now())
-
-		if got := p.depaketizer.(*fakeDepaketizer).depaketizeCount; got != 3 {
-			t.Fatalf("expected Depaketize to be called three times, got %d", got)
-		}
-
-		if got := p.decoder.(*fakeDecoder).acceptCount; got != 3 {
-			t.Fatalf("expected Decoder.Accept to be called three times, got %d", got)
-		}
-	})
-
-	t.Run("continues rendering packets even if depaketizer returns an error", func(t *testing.T) {
-		fd := &fakeDepaketizer{}
-		p := &trackPipeline{
-			track:       fakeTrack{id: "t1", ssrc: 1234},
-			buffer:      &FakeBuffer{},
-			logger:      logging.NewNullLogger("test", "null"),
-			depaketizer: fd,
-			decoder:     &fakeDecoder{},
-		}
-
-		p.buffer.Push(1234, packet.Packet{RtpTs: 5678})
-		p.buffer.Push(1234, packet.Packet{RtpTs: 6789})
-
-		// Make the depaketizer return an error on the second packet
-		fd.depaketizeFn = func(pkt packet.Packet) (depaketizers.EncodedUnit, error) {
-			if fd.depaketizeCount == 1 {
-				return nil, errors.New("depaketize error")
-			}
-			return nil, nil
-		}
-
-		p.Render(time.Now())
-
-		if got := fd.depaketizeCount; got != 2 {
-			t.Fatalf("expected Depaketize to be called once (including the error case), got %d", got)
-		}
-
-		if got := p.decoder.(*fakeDecoder).acceptCount; got != 1 {
-			t.Fatalf("expected Decoder.Accept to be called twice (only for successful depaketizations), got %d", got)
-		}
-	})
-
-	t.Run("continues rendering packets even if decoder returns an error", func(t *testing.T) {
-		fd := &fakeDepaketizer{}
-		fdec := &fakeDecoder{}
-		p := &trackPipeline{
-			track:       fakeTrack{id: "t1", ssrc: 1234},
-			buffer:      &FakeBuffer{},
-			logger:      logging.NewNullLogger("test", "null"),
-			depaketizer: fd,
-			decoder:     fdec,
-		}
-
-		p.buffer.Push(1234, packet.Packet{RtpTs: 5678})
-		p.buffer.Push(1234, packet.Packet{RtpTs: 6789})
-
-		fdec.acceptCount = 0
-		fdec.acceptFn = func(depaketizers.EncodedUnit) error {
-			if fdec.acceptCount == 1 {
-				return errors.New("decode error")
-			}
-			return nil
-		}
-
-		p.Render(time.Now())
-
-		if got := fd.depaketizeCount; got != 2 {
-			t.Fatalf("expected Depaketize to be called twice, got %d", got)
-		}
-
-		if got := fdec.acceptCount; got != 2 {
-			t.Fatalf("expected Decoder.Accept to be called twice (including the error case), got %d", got)
 		}
 	})
 }
