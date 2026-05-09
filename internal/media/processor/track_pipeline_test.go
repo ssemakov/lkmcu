@@ -781,6 +781,52 @@ func TestTrackPipeline_HandleRTCP(t *testing.T) {
 			t.Fatalf("expected ReadRTCP to be called once, got %d", got)
 		}
 	})
+
+	t.Run("updates mapper with multiple sender reports", func(t *testing.T) {
+		const (
+			ssrc      = uint32(1234)
+			clockRate = uint32(48000)
+		)
+
+		mapper := newTestMapper()
+		mapper.SetClockRate(ssrc, clockRate)
+
+		hi1, lo1 := clock.ToNTPParts(1000.0)
+		hi2, lo2 := clock.ToNTPParts(1001.0)
+
+		reports := []packet.SenderReport{
+			{RtpTs: 0, NtpHigh: hi1, NtpLow: lo1},
+			{RtpTs: 48000, NtpHigh: hi2, NtpLow: lo2},
+		}
+
+		receiver := NewControllableRTPReceiver(reports, nil, nil)
+
+		p := &trackPipeline{
+			track:    fakeTrack{id: "t1", ssrc: ssrc},
+			receiver: receiver,
+			mapper:   mapper,
+			config:   TrackPipelineConfig{RTCPReadDeadline: 10 * time.Millisecond},
+			logger:   logging.NewNullLogger("test", "null"),
+		}
+
+		if err := p.handleRTCP(); err != nil {
+			t.Fatalf("handleRTCP() error = %v, want nil", err)
+		}
+
+		mapperState := mapper.State(ssrc)
+
+		if !mapperState.HasSenderReport {
+			t.Fatalf("expect mapper to have sender report")
+		}
+
+		if mapperState.BaseRTP != uint64(clockRate) {
+			t.Fatalf("BaseRTP = %d, want %d", mapperState.BaseRTP, clockRate)
+		}
+
+		if mapperState.BaseNTP != 1001.0 {
+			t.Fatalf("BaseNTP = %f, want 1001.1", mapperState.BaseNTP)
+		}
+	})
 }
 
 func waitForReadCall(t *testing.T, name string, reads func() int32, n int32) {
