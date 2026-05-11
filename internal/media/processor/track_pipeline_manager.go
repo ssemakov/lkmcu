@@ -42,33 +42,32 @@ func NewTrackPipelineManager(l logging.Logger, ctx context.Context) TrackPipelin
 	// ToDo: pass onOverflowHandler
 	buffer := jitter_buffer.NewBuffer(clockMapper, l, jitter_buffer.DefaultConfig(), nil)
 
-	tpm := trackPipelineManager{
-		factory: &DefaultTrackPipelineFactory{
-			Logger:       l,
-			Ctx:          ctx,
-			Config:       DefaultTrackPipelineConfig(),
-			Mapper:       clockMapper,
-			Buffer:       buffer,
-			CodecFactory: &media.DefaultCodecFactory{},
-		},
-		pipelines: make(map[string]TrackPipeline),
-		buffer:    &buffer,
-		mapper:    clockMapper,
-		logger:    l,
-		ctx:       ctx,
-	}
+	tpm := NewTrackPipelineManagerWithFactory(&DefaultTrackPipelineFactory{
+		Logger:       l,
+		Ctx:          ctx,
+		Config:       DefaultTrackPipelineConfig(),
+		Mapper:       clockMapper,
+		Buffer:       buffer,
+		CodecFactory: &media.DefaultCodecFactory{},
+	}, clockMapper, buffer, l, ctx).(*trackPipelineManager)
 
 	// start once and let it idle when no ingress
 	// TODO: for now all pipelines are audio, we'll introduce video later and can split the loop then
 	go tpm.audioLoop()
 
-	return &tpm
+	return tpm
 }
 
-func NewTrackPipelineManagerWithFactory(factory TrackPipelineFactory) TrackPipelineManager {
+func NewTrackPipelineManagerWithFactory(factory TrackPipelineFactory, clockMapper *clock.ClockMapper,
+	buffer jitter_buffer.Buffer, l logging.Logger, ctx context.Context,
+) TrackPipelineManager {
 	return &trackPipelineManager{
 		factory:   factory,
 		pipelines: make(map[string]TrackPipeline),
+		buffer:    &buffer,
+		mapper:    clockMapper,
+		logger:    l,
+		ctx:       ctx,
 	}
 }
 

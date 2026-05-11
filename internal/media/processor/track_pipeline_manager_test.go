@@ -1,10 +1,13 @@
 package processor
 
 import (
+	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ssemakov/lkmcu/internal/livekit"
+	"github.com/ssemakov/lkmcu/internal/logging"
 	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
 
@@ -23,19 +26,26 @@ func (f *fakeTPFactory) NewTrackPipeline(track livekit.RemoteTrack, receiver liv
 }
 
 type fakeTP struct {
-	startCalled int
-	stopCalled  int
+	startCalled  int32
+	stopCalled   int32
+	renderCalled int32
 }
 
 func (p *fakeTP) Start() {
-	p.startCalled++
+	atomic.AddInt32(&p.startCalled, 1)
 }
 
 func (p *fakeTP) Stop() {
-	p.stopCalled++
+	atomic.AddInt32(&p.stopCalled, 1)
 }
 
-func (p *fakeTP) Render(time.Time) {}
+func (p *fakeTP) Render(time.Time) {
+	atomic.AddInt32(&p.renderCalled, 1)
+}
+
+func (p *fakeTP) RenderCalls() int32 {
+	return atomic.LoadInt32(&p.renderCalled)
+}
 
 type fakeTrack struct {
 	id       string
@@ -51,8 +61,7 @@ func (t fakeTrack) ClockRate() uint32               { return 48000 }
 func (t fakeTrack) MimeType() string                { return "audio/opus" }
 func (t fakeTrack) SetReadDeadline(time.Time) error { return nil }
 
-type fakeReceiver struct {
-}
+type fakeReceiver struct{}
 
 func (r fakeReceiver) ReadSenderReports() ([]packet.SenderReport, error) {
 	return nil, nil
@@ -60,10 +69,24 @@ func (r fakeReceiver) ReadSenderReports() ([]packet.SenderReport, error) {
 func (r fakeReceiver) SetReadDeadline(t time.Time) error { return nil }
 func (r fakeReceiver) Stop() error                       { return nil }
 
+func newTestTrackPipelineManager(factory TrackPipelineFactory, ctx context.Context) *trackPipelineManager {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	return NewTrackPipelineManagerWithFactory(
+		factory,
+		newTestMapper(),
+		noopBuffer{},
+		logging.NewNullLogger("test", "null"),
+		ctx,
+	).(*trackPipelineManager)
+}
+
 func TestTrackPipelineManager_NewTrackPipeline(t *testing.T) {
 	pipeline := &fakeTP{}
 	factory := &fakeTPFactory{pipeline: pipeline}
-	m := NewTrackPipelineManagerWithFactory(factory).(*trackPipelineManager)
+	m := newTestTrackPipelineManager(factory, nil)
 	track := fakeTrack{id: "t1"}
 	receiver := fakeReceiver{}
 
@@ -85,8 +108,38 @@ func TestTrackPipelineManager_NewTrackPipeline(t *testing.T) {
 	}
 }
 
+func TestTrackPipelineManager_NewTrackPipeline_audioLoop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pipeline := &fakeTP{}
+	m := newTestTrackPipelineManager(&fakeTPFactory{pipeline: pipeline}, ctx)
+	track := fakeTrack{id: "t1"}
+	receiver := fakeReceiver{}
+
+	_, err := m.NewTrackPipeline(track, receiver)
+	if err != nil {
+		t.Fatalf("NewTrackPipeline() error = %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		m.audioLoop()
+		close(done)
+	}()
+
+	waitForReadCall(t, "Render", pipeline.RenderCalls, 1)
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected audioLoop to stop after context cancellation")
+	}
+}
+
 func TestTrackPipelineManager_RemoveTrackPipeline_MultipleCalls(t *testing.T) {
-	m := NewTrackPipelineManagerWithFactory(&fakeTPFactory{pipeline: &fakeTP{}}).(*trackPipelineManager)
+	m := newTestTrackPipelineManager(&fakeTPFactory{pipeline: &fakeTP{}}, nil)
 	p := &fakeTP{}
 	m.pipelines["t1"] = p
 
