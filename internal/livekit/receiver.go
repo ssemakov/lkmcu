@@ -17,7 +17,7 @@ type Receiver interface {
 }
 
 // Internal interface to abstract away the webrtc.RTPReceiver and allow for testing without a full LiveKit connection.
-type webRtcRtpReceiver interface {
+type webRtcRTPReceiver interface {
 	ReadRTCP() ([]rtcp.Packet, interceptor.Attributes, error)
 	SetReadDeadline(t time.Time) error
 	Stop() error
@@ -26,11 +26,11 @@ type webRtcRtpReceiver interface {
 // compile-time assertions
 var (
 	_ Receiver          = (*receiverAdapter)(nil)
-	_ webRtcRtpReceiver = (*webrtc.RTPReceiver)(nil)
+	_ webRtcRTPReceiver = (*webrtc.RTPReceiver)(nil)
 )
 
 type receiverAdapter struct {
-	receiver webRtcRtpReceiver
+	receiver webRtcRTPReceiver
 }
 
 func (a *receiverAdapter) ReadSenderReports() ([]packet.SenderReport, error) {

@@ -11,7 +11,7 @@ import (
 	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
 
-type fakeWebRtcRtpReceiver struct {
+type fakeWebRtcRTPReceiver struct {
 	readRTCPPackets []rtcp.Packet
 	readRTCPAttrs   interceptor.Attributes
 	readRTCPErr     error
@@ -25,18 +25,18 @@ type fakeWebRtcRtpReceiver struct {
 	stopErr    error
 }
 
-func (f *fakeWebRtcRtpReceiver) ReadRTCP() ([]rtcp.Packet, interceptor.Attributes, error) {
+func (f *fakeWebRtcRTPReceiver) ReadRTCP() ([]rtcp.Packet, interceptor.Attributes, error) {
 	f.readRTCPCalled++
 	return f.readRTCPPackets, f.readRTCPAttrs, f.readRTCPErr
 }
 
-func (f *fakeWebRtcRtpReceiver) SetReadDeadline(t time.Time) error {
+func (f *fakeWebRtcRTPReceiver) SetReadDeadline(t time.Time) error {
 	f.setReadDeadlineCalled++
 	f.setReadDeadlineArg = t
 	return f.setReadDeadlineErr
 }
 
-func (f *fakeWebRtcRtpReceiver) Stop() error {
+func (f *fakeWebRtcRTPReceiver) Stop() error {
 	f.stopCalled++
 	return f.stopErr
 }
@@ -64,7 +64,7 @@ func TestReceiverAdapter_ReadSenderReports_Delegates(t *testing.T) {
 		&rtcp.TransportLayerNack{MediaSSRC: 4321},
 		&rtcp.SenderReport{RTPTime: 2222, NTPTime: 0xaabbccddeeff0011},
 	}
-	fake := &fakeWebRtcRtpReceiver{
+	fake := &fakeWebRtcRTPReceiver{
 		readRTCPPackets: fakePackets,
 		readRTCPAttrs:   interceptor.Attributes{"x-test": "ignored"},
 	}
@@ -84,7 +84,7 @@ func TestReceiverAdapter_ReadSenderReports_Delegates(t *testing.T) {
 
 func TestReceiverAdapter_ReadSenderReports_PropagatesError(t *testing.T) {
 	wantErr := errors.New("read failed")
-	fake := &fakeWebRtcRtpReceiver{readRTCPErr: wantErr}
+	fake := &fakeWebRtcRTPReceiver{readRTCPErr: wantErr}
 	a := &receiverAdapter{receiver: fake}
 
 	got, err := a.ReadSenderReports()
@@ -107,7 +107,7 @@ func TestReceiverAdapter_SetReadDeadline_NilReceiver(t *testing.T) {
 func TestReceiverAdapter_SetReadDeadline_Delegates(t *testing.T) {
 	deadline := time.Date(2026, time.March, 5, 10, 11, 12, 13, time.UTC)
 	wantErr := errors.New("deadline failed")
-	fake := &fakeWebRtcRtpReceiver{setReadDeadlineErr: wantErr}
+	fake := &fakeWebRtcRTPReceiver{setReadDeadlineErr: wantErr}
 	a := &receiverAdapter{receiver: fake}
 
 	err := a.SetReadDeadline(deadline)
@@ -132,7 +132,7 @@ func TestReceiverAdapter_Stop_NilReceiver(t *testing.T) {
 
 func TestReceiverAdapter_Stop_Delegates(t *testing.T) {
 	wantErr := errors.New("stop failed")
-	fake := &fakeWebRtcRtpReceiver{stopErr: wantErr}
+	fake := &fakeWebRtcRTPReceiver{stopErr: wantErr}
 	a := &receiverAdapter{receiver: fake}
 
 	err := a.Stop()

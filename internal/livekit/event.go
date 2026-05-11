@@ -1,6 +1,6 @@
 package livekit
 
-// LiveKit normalizes events as Event interface
+// Event interface for normalazing LiveKit events.
 type Event interface{ isLiveKitEvent() }
 
 type (

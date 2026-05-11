@@ -93,28 +93,28 @@ func TestStreamClock_AnchorInitializesState(t *testing.T) {
 	}
 
 	const (
-		rtpTs = uint32(12345)
-		ntpTs = 1000.25
+		rtpTS = uint32(12345)
+		ntpTS = 1000.25
 		rate  = uint32(90000)
 	)
 
 	sc.SetClockRate(rate)
-	sc.Anchor(rtpTs, ntpTs)
+	sc.Anchor(rtpTS, ntpTS)
 
 	if sc.state != Anchored {
 		t.Fatalf("state=%v want=%v", sc.state, Anchored)
 	}
-	if sc.baseRTP != uint64(rtpTs) {
-		t.Fatalf("baseRTP=%d want=%d", sc.baseRTP, rtpTs)
+	if sc.baseRTP != uint64(rtpTS) {
+		t.Fatalf("baseRTP=%d want=%d", sc.baseRTP, rtpTS)
 	}
-	if sc.baseNTP != ntpTs {
-		t.Fatalf("baseNTP=%f want=%f", sc.baseNTP, ntpTs)
+	if sc.baseNTP != ntpTS {
+		t.Fatalf("baseNTP=%f want=%f", sc.baseNTP, ntpTS)
 	}
-	if sc.lastNTPOutput != ntpTs {
-		t.Fatalf("lastNTPOutput=%f want=%f", sc.lastNTPOutput, ntpTs)
+	if sc.lastNTPOutput != ntpTS {
+		t.Fatalf("lastNTPOutput=%f want=%f", sc.lastNTPOutput, ntpTS)
 	}
-	if sc.wrapTracker.lastRTP != rtpTs || sc.wrapTracker.wraps != 0 {
-		t.Fatalf("wrapTracker=%+v want lastRTP=%d wraps=0", sc.wrapTracker, rtpTs)
+	if sc.wrapTracker.lastRTP != rtpTS || sc.wrapTracker.wraps != 0 {
+		t.Fatalf("wrapTracker=%+v want lastRTP=%d wraps=0", sc.wrapTracker, rtpTS)
 	}
 	if sc.degraded {
 		t.Fatal("expected degraded=false after anchor")
@@ -145,15 +145,15 @@ func TestStreamClock_UpdateClearsDiscontinuityOnStableSR(t *testing.T) {
 	}
 	sc.Anchor(0, 1000.0)
 
-	rtpTs := uint32(90000)
-	ntpTs := 1001.0
-	sc.Update(rtpTs, ntpTs, 50*time.Millisecond)
+	rtpTS := uint32(90000)
+	ntpTS := 1001.0
+	sc.Update(rtpTS, ntpTS, 50*time.Millisecond)
 
-	if sc.baseRTP != uint64(rtpTs) {
-		t.Fatalf("baseRTP=%d want=%d", sc.baseRTP, rtpTs)
+	if sc.baseRTP != uint64(rtpTS) {
+		t.Fatalf("baseRTP=%d want=%d", sc.baseRTP, rtpTS)
 	}
-	if sc.baseNTP != ntpTs {
-		t.Fatalf("baseNTP=%f want=%f", sc.baseNTP, ntpTs)
+	if sc.baseNTP != ntpTS {
+		t.Fatalf("baseNTP=%f want=%f", sc.baseNTP, ntpTS)
 	}
 	if sc.degraded {
 		t.Fatal("expected degraded=false after stable update")
@@ -167,15 +167,15 @@ func TestStreamClock_UpdateMarksDiscontinuityOnLargeJump(t *testing.T) {
 	sc := StreamClock{clockRate: 90000}
 	sc.Anchor(0, 1000.0)
 
-	rtpTs := uint32(90000)
-	ntpTs := 1001.060
-	sc.Update(rtpTs, ntpTs, 50*time.Millisecond)
+	rtpTS := uint32(90000)
+	ntpTS := 1001.060
+	sc.Update(rtpTS, ntpTS, 50*time.Millisecond)
 
-	if sc.baseRTP != uint64(rtpTs) {
-		t.Fatalf("baseRTP=%d want=%d", sc.baseRTP, rtpTs)
+	if sc.baseRTP != uint64(rtpTS) {
+		t.Fatalf("baseRTP=%d want=%d", sc.baseRTP, rtpTS)
 	}
-	if sc.baseNTP != ntpTs {
-		t.Fatalf("baseNTP=%f want=%f", sc.baseNTP, ntpTs)
+	if sc.baseNTP != ntpTS {
+		t.Fatalf("baseNTP=%f want=%f", sc.baseNTP, ntpTS)
 	}
 	if !sc.degraded {
 		t.Fatal("expected degraded=true after discontinuity")
@@ -183,8 +183,8 @@ func TestStreamClock_UpdateMarksDiscontinuityOnLargeJump(t *testing.T) {
 	if !sc.discontinuity {
 		t.Fatal("expected discontinuity=true after discontinuity")
 	}
-	if sc.lastNTPOutput != ntpTs {
-		t.Fatalf("lastNTPOutput=%f want=%f", sc.lastNTPOutput, ntpTs)
+	if sc.lastNTPOutput != ntpTS {
+		t.Fatalf("lastNTPOutput=%f want=%f", sc.lastNTPOutput, ntpTS)
 	}
 }
 

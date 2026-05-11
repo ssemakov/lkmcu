@@ -148,6 +148,7 @@ func TestClient_Close_WithRoom(t *testing.T) {
 		t.Fatalf("Close() returned error: %v", err)
 	}
 }
+
 func TestSubscriptionSnapshot_NilRoomREturnsEmpty(t *testing.T) {
 	c := NewClient("ws://x", "k", "s", nil)
 
@@ -195,12 +196,12 @@ func (f fakePub) Kind() lksdk.TrackKind         { return f.kind }
 func (f fakePub) Receiver() *webrtc.RTPReceiver { return nil }
 
 type fakeRemoteTrack struct {
-	IdVal   string
+	IDVal   string
 	KindVal string
 	SsrcVal uint32
 }
 
-func (f fakeRemoteTrack) ID() string { return f.IdVal }
+func (f fakeRemoteTrack) ID() string { return f.IDVal }
 
 func (f fakeRemoteTrack) Kind() webrtc.RTPCodecType {
 	if f.KindVal == "audio" {
@@ -236,7 +237,7 @@ func recvOne(t *testing.T, ch <-chan Event) any {
 }
 
 func TestClient_EventHandling(t *testing.T) {
-	track := fakeRemoteTrack{IdVal: "track1", KindVal: "video", SsrcVal: 1234}
+	track := fakeRemoteTrack{IDVal: "track1", KindVal: "video", SsrcVal: 1234}
 	pub := fakePub{sid: "track1", kind: lksdk.TrackKindVideo}
 	rp := fakeRP{sid: "participant1", identity: "user1"}
 
@@ -270,8 +271,10 @@ func TestClient_EventHandling(t *testing.T) {
 		{
 			name:   "track subscribed",
 			invoke: func(c *client) { c.onTrackSubscribed(track, pub, rp) },
-			want: TrackSubscribed{PID: rp.sid, Identity: rp.identity, TID: pub.sid, Kind: pub.kind.String(),
-				RemoteTrack: &remoteTrackAdapter{track: track}, Receiver: &receiverAdapter{receiver: nil}},
+			want: TrackSubscribed{
+				PID: rp.sid, Identity: rp.identity, TID: pub.sid, Kind: pub.kind.String(),
+				RemoteTrack: &remoteTrackAdapter{track: track}, Receiver: &receiverAdapter{receiver: nil},
+			},
 		},
 		{
 			name:   "track unsubscribed",

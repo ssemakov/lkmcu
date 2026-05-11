@@ -68,9 +68,9 @@ func (sc *StreamClock) SetClockRate(clockRate uint32) {
 	sc.clockRate = clockRate
 }
 
-func (sc *StreamClock) Anchor(rtpTs uint32, ntpTsSec float64) {
+func (sc *StreamClock) Anchor(rtpTS uint32, ntpTSSec float64) {
 	sc.state = Anchored
-	sc.reset(rtpTs, ntpTsSec)
+	sc.reset(rtpTS, ntpTSSec)
 	sc.degraded = false
 	sc.discontinuity = false
 }
@@ -79,35 +79,35 @@ func (sc *StreamClock) Lock() {
 	sc.state = Locked
 }
 
-func (sc *StreamClock) Update(rtpTs uint32, ntpTsSec float64, discontinuityThreshold time.Duration) {
-	extRtp := sc.wrapTracker.ExtendedRTP(rtpTs)
-	discontinuity := sc.detectDiscontinuity(extRtp, ntpTsSec, discontinuityThreshold)
+func (sc *StreamClock) Update(rtpTS uint32, ntpTSSec float64, discontinuityThreshold time.Duration) {
+	extRTP := sc.wrapTracker.ExtendedRTP(rtpTS)
+	discontinuity := sc.detectDiscontinuity(extRTP, ntpTSSec, discontinuityThreshold)
 
 	if discontinuity {
-		sc.setDiscontinuity(rtpTs, ntpTsSec)
+		sc.setDiscontinuity(rtpTS, ntpTSSec)
 	} else {
 		sc.resetDiscontinuity()
-		sc.baseNTP = ntpTsSec
-		sc.baseRTP = extRtp
+		sc.baseNTP = ntpTSSec
+		sc.baseRTP = extRTP
 		sc.lastSRReceivedAt = time.Now()
 	}
 }
 
-func (sc *StreamClock) NtpTime(ntpTs uint32) float64 {
-	extRtp := sc.wrapTracker.ExtendedRTP(ntpTs)
-	return sc.baseNTP + sc.deltaSeconds(extRtp)
+func (sc *StreamClock) NtpTime(ntpTS uint32) float64 {
+	extRTP := sc.wrapTracker.ExtendedRTP(ntpTS)
+	return sc.baseNTP + sc.deltaSeconds(extRTP)
 }
 
-func (sc *StreamClock) detectDiscontinuity(extRtp uint64, ntpTsSec float64, threshold time.Duration) bool {
+func (sc *StreamClock) detectDiscontinuity(extRTP uint64, ntpTSSec float64, threshold time.Duration) bool {
 	// Calculate expected NTP timestamp based on the anchored RTP/NTP reference
-	predicted := sc.baseNTP + sc.deltaSeconds(extRtp)
-	delta := ntpTsSec - predicted
+	predicted := sc.baseNTP + sc.deltaSeconds(extRTP)
+	delta := ntpTSSec - predicted
 
 	return math.Abs(delta) > threshold.Seconds()
 }
 
-func (sc *StreamClock) setDiscontinuity(ptsTs uint32, ntpTsSec float64) {
-	sc.reset(ptsTs, ntpTsSec)
+func (sc *StreamClock) setDiscontinuity(ptsTS uint32, ntpTSSec float64) {
+	sc.reset(ptsTS, ntpTSSec)
 	sc.degraded = true
 	sc.discontinuity = true
 }
@@ -118,15 +118,15 @@ func (sc *StreamClock) resetDiscontinuity() {
 }
 
 // deltaSeconds calculates the time difference in seconds between the given extended RTP timestamp and the base RTP timestamp
-func (sc *StreamClock) deltaSeconds(extRtp uint64) float64 {
-	return (float64(extRtp) - float64(sc.baseRTP)) / float64(sc.clockRate)
+func (sc *StreamClock) deltaSeconds(extRTP uint64) float64 {
+	return (float64(extRTP) - float64(sc.baseRTP)) / float64(sc.clockRate)
 }
 
-func (sc *StreamClock) reset(rtpTs uint32, ntpTsSec float64) {
+func (sc *StreamClock) reset(rtpTS uint32, ntpTSSec float64) {
 	sc.wrapTracker.wraps = 0
-	sc.wrapTracker.lastRTP = rtpTs
-	sc.baseRTP = uint64(rtpTs)
-	sc.baseNTP = ntpTsSec
-	sc.lastNTPOutput = ntpTsSec
+	sc.wrapTracker.lastRTP = rtpTS
+	sc.baseRTP = uint64(rtpTS)
+	sc.baseNTP = ntpTSSec
+	sc.lastNTPOutput = ntpTSSec
 	sc.lastSRReceivedAt = time.Now()
 }

@@ -1,3 +1,5 @@
+// Package livekit wraps the LiveKit SDK with the narrower room, event, and
+// subscription interfaces used by the MCU pipeline.
 package livekit
 
 import (
@@ -11,9 +13,11 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-type setSubscribedFn func(subscribe bool) error
-type findSubTargetFn func(pid, trackID string) (setSubscribedFn, error)
-type listSubsFn func() []*Subscription
+type (
+	setSubscribedFn func(subscribe bool) error
+	findSubTargetFn func(pid, trackID string) (setSubscribedFn, error)
+	listSubsFn      func() []*Subscription
+)
 
 type Client interface {
 	JoinRoom(roomName, identity string) error
@@ -41,7 +45,7 @@ type EventOptions struct {
 	DropPolicy DropPolicy
 }
 
-// Defines how the client should behave when the event buffer (evCh) is full
+// DropPolicy defines how the client should behave when the event buffer (evCh) is full
 type DropPolicy int
 
 const (
@@ -53,7 +57,8 @@ func NewClient(url, apiKey, apiSecret string, opts *EventOptions) Client {
 	if opts == nil {
 		opts = &EventOptions{BufferSize: 64, DropPolicy: DropOldest}
 	}
-	client := &client{url: url, apiKey: apiKey, apiSecret: apiSecret,
+	client := &client{
+		url: url, apiKey: apiKey, apiSecret: apiSecret,
 		evCh:       make(chan Event, opts.BufferSize),
 		dropPolicy: opts.DropPolicy,
 	}
@@ -94,7 +99,6 @@ func (c *client) JoinRoom(roomName, identity string) error {
 		ParticipantName:     "",
 		ParticipantKind:     lksdk.ParticipantAgent,
 	}, roomCB, lksdk.WithAutoSubscribe(false))
-
 	if err != nil {
 		return err
 	}
@@ -276,12 +280,16 @@ func (c *client) onTrackSubscribed(track webrtcRemoteTrack, pub remoteTrackPubli
 	r := pub.Receiver()
 	rec := &receiverAdapter{receiver: r}
 
-	c.push(TrackSubscribed{PID: rp.SID(), Identity: rp.Identity(), TID: pub.SID(), Kind: pub.Kind().String(),
-		RemoteTrack: rt, Receiver: rec})
+	c.push(TrackSubscribed{
+		PID: rp.SID(), Identity: rp.Identity(), TID: pub.SID(), Kind: pub.Kind().String(),
+		RemoteTrack: rt, Receiver: rec,
+	})
 }
 
 func (c *client) onTrackUnsubscribed(track webrtcRemoteTrack, pub remoteTrackPublication, rp remoteParticipant) {
 	rt := &remoteTrackAdapter{track: track}
-	c.push(TrackUnsubscribed{PID: rp.SID(), Identity: rp.Identity(), TID: pub.SID(), Kind: pub.Kind().String(),
-		RemoteTrack: rt})
+	c.push(TrackUnsubscribed{
+		PID: rp.SID(), Identity: rp.Identity(), TID: pub.SID(), Kind: pub.Kind().String(),
+		RemoteTrack: rt,
+	})
 }
