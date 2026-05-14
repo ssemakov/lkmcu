@@ -11,33 +11,33 @@ import (
 	"github.com/ssemakov/lkmcu/internal/media/clock"
 	"github.com/ssemakov/lkmcu/internal/media/decoders"
 	"github.com/ssemakov/lkmcu/internal/media/depaketizers"
-	"github.com/ssemakov/lkmcu/internal/media/jitter_buffer"
+	"github.com/ssemakov/lkmcu/internal/media/jitter"
 	"github.com/ssemakov/lkmcu/internal/media/packet"
 	"github.com/ssemakov/lkmcu/internal/metrics"
 )
 
 type noopBuffer struct{}
 
-func (noopBuffer) Push(uint32, packet.Packet) (jitter_buffer.Status, error) {
-	return jitter_buffer.StatusAccepted, nil
+func (noopBuffer) Push(uint32, packet.Packet) (jitter.Status, error) {
+	return jitter.StatusAccepted, nil
 }
 
 func (noopBuffer) Pop(uint32, time.Time) (packet.Packet, bool) { return packet.Packet{}, false }
 func (noopBuffer) Occupancy(uint32) time.Duration              { return 0 }
 func (noopBuffer) Target(uint32) time.Duration                 { return 0 }
-func (noopBuffer) Config() *jitter_buffer.Config               { return jitter_buffer.DefaultConfig() }
+func (noopBuffer) Config() *jitter.Config                      { return jitter.DefaultConfig() }
 
 type recordingBuffer struct {
 	noopBuffer
 
 	ssrc   uint32
 	pkt    packet.Packet
-	status jitter_buffer.Status
+	status jitter.Status
 	err    error
 	calls  int
 }
 
-func (b *recordingBuffer) Push(ssrc uint32, pkt packet.Packet) (jitter_buffer.Status, error) {
+func (b *recordingBuffer) Push(ssrc uint32, pkt packet.Packet) (jitter.Status, error) {
 	b.calls++
 	b.ssrc = ssrc
 	b.pkt = pkt
@@ -617,7 +617,7 @@ func TestTrackPipeline_Render(t *testing.T) {
 
 func TestTrackPipeline_onRTP(t *testing.T) {
 	t.Run("passes exact packet and SSRC to buffer", func(t *testing.T) {
-		buf := &recordingBuffer{status: jitter_buffer.StatusAccepted}
+		buf := &recordingBuffer{status: jitter.StatusAccepted}
 		p := &trackPipeline{
 			track:  fakeTrack{id: "t1", ssrc: 1234},
 			buffer: buf,
@@ -647,7 +647,7 @@ func TestTrackPipeline_onRTP(t *testing.T) {
 	t.Run("propagates buffer errors", func(t *testing.T) {
 		wantErr := errors.New("buffer push failed")
 		buf := &recordingBuffer{
-			status: jitter_buffer.StatusAccepted,
+			status: jitter.StatusAccepted,
 			err:    wantErr,
 		}
 		p := &trackPipeline{

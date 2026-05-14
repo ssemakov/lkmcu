@@ -3,7 +3,7 @@ package processor
 import (
 	"time"
 
-	"github.com/ssemakov/lkmcu/internal/media/jitter_buffer"
+	"github.com/ssemakov/lkmcu/internal/media/jitter"
 	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
 
@@ -11,9 +11,9 @@ type FakeBuffer struct {
 	packets []packet.Packet
 }
 
-func (b *FakeBuffer) Push(_ uint32, pkt packet.Packet) (jitter_buffer.Status, error) {
+func (b *FakeBuffer) Push(_ uint32, pkt packet.Packet) (jitter.Status, error) {
 	b.packets = append(b.packets, pkt)
-	return jitter_buffer.StatusAccepted, nil
+	return jitter.StatusAccepted, nil
 }
 
 func (b *FakeBuffer) Pop(_ uint32, _ time.Time) (packet.Packet, bool) {
@@ -27,6 +27,6 @@ func (b *FakeBuffer) Pop(_ uint32, _ time.Time) (packet.Packet, bool) {
 
 func (b *FakeBuffer) Occupancy(uint32) time.Duration { return 0 }
 func (b *FakeBuffer) Target(uint32) time.Duration    { return 0 }
-func (b *FakeBuffer) Config() *jitter_buffer.Config {
-	return jitter_buffer.DefaultConfig()
+func (b *FakeBuffer) Config() *jitter.Config {
+	return jitter.DefaultConfig()
 }

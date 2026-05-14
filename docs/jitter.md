@@ -138,7 +138,7 @@ type Buffer interface {
 ## Integration & Dependencies
 
 - Depends on `internal/media/clock/mapper.go` for RTP→NTP timestamping and mapper health.
-- Implemented in `internal/media/jitter_buffer/buffer.go`.
+- Implemented in `internal/media/jitter/buffer.go`.
 - Currently wired into the subscriber pipeline on `Push()` from `internal/media/processor/track_pipeline.go`.
 - `internal/metrics` integration described here is still aspirational and should be treated as future work unless explicitly implemented.
 

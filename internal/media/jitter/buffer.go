@@ -1,10 +1,10 @@
-// Package jitter_buffer implements a simple, adaptive RTP jitter buffer
+// Package jitter implements a simple, adaptive RTP jitter buffer
 // suitable for audio/video playout. It smooths inter‑arrival jitter by
 // admitting, ordering, and releasing packets against a playout cursor on
 // a stable clock produced by the clock mapper.
 //
-// Design notes and expected behavior are described in docs/jitter_buffer.md.
-package jitter_buffer
+// Design notes and expected behavior are described in docs/jitter.md.
+package jitter
 
 import (
 	"fmt"
@@ -30,7 +30,7 @@ const (
 	StatusLateDrop
 	// StatusMapperDegraded indicates the packet was admitted but the
 	// RTP→NTP clock mapper reported a degraded state; the buffer widens
-	// to Config.MaxTarget for this SSRC while degraded. See docs/jitter_buffer.md.
+	// to Config.MaxTarget for this SSRC while degraded. See docs/jitter.md.
 	StatusMapperDegraded
 	// StatusMapperError indicates RTP→NTP conversion failed; the packet
 	// was not admitted and an error is returned.
@@ -56,7 +56,7 @@ func StatusString(status Status) string {
 
 // Buffer provides a concurrency‑safe jitter buffer interface keyed by SSRC.
 //
-// Contract (see docs/jitter_buffer.md):
+// Contract (see docs/jitter.md):
 //   - Push() admits packets, dropping late or duplicate packets.
 //   - Pop() releases the next packet when its presentation timestamp is
 //     ≤ the playout cursor (now - target).
@@ -78,7 +78,7 @@ type Buffer interface {
 }
 
 // Config controls jitter buffer behavior. All durations are in time.Duration.
-// Defaults follow the guidance in docs/jitter_buffer.md.
+// Defaults follow the guidance in docs/jitter.md.
 //
 // Notes:
 //   - LateDrop defines how far behind the playout cursor a packet may be
@@ -144,7 +144,7 @@ type jitterBuffer struct {
 }
 
 // DefaultConfig returns a Config populated with conservative defaults that
-// provide stable playout under typical jitter. See docs/jitter_buffer.md.
+// provide stable playout under typical jitter. See docs/jitter.md.
 func DefaultConfig() *Config {
 	return &Config{
 		LateDrop:        20 * time.Millisecond,

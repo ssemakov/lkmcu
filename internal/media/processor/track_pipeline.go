@@ -17,7 +17,7 @@ import (
 	"github.com/ssemakov/lkmcu/internal/media/clock"
 	"github.com/ssemakov/lkmcu/internal/media/decoders"
 	"github.com/ssemakov/lkmcu/internal/media/depaketizers"
-	"github.com/ssemakov/lkmcu/internal/media/jitter_buffer"
+	"github.com/ssemakov/lkmcu/internal/media/jitter"
 	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
 
@@ -54,12 +54,12 @@ type DefaultTrackPipelineFactory struct {
 	Ctx          context.Context
 	Config       TrackPipelineConfig
 	Mapper       *clock.ClockMapper
-	Buffer       jitter_buffer.Buffer
+	Buffer       jitter.Buffer
 	CodecFactory media.CodecFactory
 }
 
 type trackPipeline struct {
-	buffer      jitter_buffer.Buffer
+	buffer      jitter.Buffer
 	mapper      *clock.ClockMapper
 	track       livekit.RemoteTrack
 	receiver    livekit.Receiver
@@ -303,13 +303,13 @@ func (p *trackPipeline) onRTP(pkt packet.Packet) error {
 	status, err := p.buffer.Push(p.track.SSRC(), pkt)
 
 	switch status {
-	case jitter_buffer.StatusMapperDegraded:
+	case jitter.StatusMapperDegraded:
 		p.logger.Debugf("RTP accepted but clock mapper is degraded, track ID: %s", p.track.ID())
-	case jitter_buffer.StatusAccepted:
+	case jitter.StatusAccepted:
 		p.logger.Tracef("RTP accepted, track ID: %s", p.track.ID())
 	default:
 		p.logger.Debugf("RTP packet was not accepted by the buffer, status: %v, track ID: %s",
-			jitter_buffer.StatusString(status), p.track.ID())
+			jitter.StatusString(status), p.track.ID())
 	}
 
 	if err != nil {

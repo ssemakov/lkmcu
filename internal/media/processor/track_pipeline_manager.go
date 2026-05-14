@@ -10,7 +10,7 @@ import (
 	"github.com/ssemakov/lkmcu/internal/logging"
 	"github.com/ssemakov/lkmcu/internal/media"
 	"github.com/ssemakov/lkmcu/internal/media/clock"
-	"github.com/ssemakov/lkmcu/internal/media/jitter_buffer"
+	"github.com/ssemakov/lkmcu/internal/media/jitter"
 	"github.com/ssemakov/lkmcu/internal/metrics"
 )
 
@@ -25,7 +25,7 @@ type TrackPipelineManager interface {
 type trackPipelineManager struct {
 	factory   TrackPipelineFactory
 	pipelines map[string]TrackPipeline
-	buffer    *jitter_buffer.Buffer
+	buffer    *jitter.Buffer
 	mapper    *clock.ClockMapper
 
 	logger logging.Logger
@@ -40,7 +40,7 @@ var ErrPipekNotFound = errors.New("track pipeline not found")
 func NewTrackPipelineManager(l logging.Logger, ctx context.Context) TrackPipelineManager {
 	clockMapper := clock.NewClockMapper(metrics.NewMetrics(), l, clock.DefaultClockMapperConfig())
 	// ToDo: pass onOverflowHandler
-	buffer := jitter_buffer.NewBuffer(clockMapper, l, jitter_buffer.DefaultConfig(), nil)
+	buffer := jitter.NewBuffer(clockMapper, l, jitter.DefaultConfig(), nil)
 
 	tpm := NewTrackPipelineManagerWithFactory(&DefaultTrackPipelineFactory{
 		Logger:       l,
@@ -59,7 +59,7 @@ func NewTrackPipelineManager(l logging.Logger, ctx context.Context) TrackPipelin
 }
 
 func NewTrackPipelineManagerWithFactory(factory TrackPipelineFactory, clockMapper *clock.ClockMapper,
-	buffer jitter_buffer.Buffer, l logging.Logger, ctx context.Context,
+	buffer jitter.Buffer, l logging.Logger, ctx context.Context,
 ) TrackPipelineManager {
 	return &trackPipelineManager{
 		factory:   factory,

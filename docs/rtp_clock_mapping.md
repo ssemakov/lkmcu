@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define how the MCU reconstructs a stable wall-clock for incoming RTP streams using RTCP Sender Reports (SR) and how it bounds inter-stream drift to ≤ 40 ms per hour (≈ 11 ppm). This document covers clock-state management, drift detection, correction tactics, and observability. See [Jitter Buffer Design](./jitter_buffer.md) for buffering strategy built on top of this timing model.
+Define how the MCU reconstructs a stable wall-clock for incoming RTP streams using RTCP Sender Reports (SR) and how it bounds inter-stream drift to ≤ 40 ms per hour (≈ 11 ppm). This document covers clock-state management, drift detection, correction tactics, and observability. See [Jitter Buffer Design](./jitter.md) for buffering strategy built on top of this timing model.
 
 ## Objectives
 
@@ -165,7 +165,7 @@ Where:
 - `internal/media/clock/mapper.go`: implements the RTP→NTP mapping and SR state machine above.
 - `internal/media/clock/stream_clock.go`: owns the per-SSRC clock phase and anchor/discontinuity helpers.
 - `internal/media/clock/drift.go`: contains the drift estimator logic.
-- `internal/media/jitter_buffer/buffer.go`: consumes mapper output for packet admission and degraded-mode widening.
+- `internal/media/jitter/buffer.go`: consumes mapper output for packet admission and degraded-mode widening.
 - `internal/pipeline` / `internal/media/processor`: inject mapper and jitter buffer into subscriber lifecycle.
 
 ## Failure Modes & Mitigations

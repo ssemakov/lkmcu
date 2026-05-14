@@ -1,4 +1,4 @@
-package jitter_buffer
+package jitter
 
 import "container/heap"
 

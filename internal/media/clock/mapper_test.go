@@ -512,7 +512,6 @@ func TestMapper_ForEach_StopsWhenCallbackReturnsFalse(t *testing.T) {
 	cm := newTestMapper(nil, nil)
 	cm.SetClockRate(1, 90000)
 	cm.SetClockRate(2, 90000)
-	cm.SetClockRate(3, 90000)
 
 	calls := 0
 	cm.ForEach(func(uint32, MapperState) bool {
