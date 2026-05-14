@@ -384,3 +384,143 @@ func TestMapper_MonotonicGuard_LargeBackstep(t *testing.T) {
 		t.Fatalf("expected degraded=true for large backstep, got state=%+v", st)
 	}
 }
+
+func TestMapper_ForEach_EmptyMapper(t *testing.T) {
+	cm := newTestMapper(nil, nil)
+	calls := 0
+	f := func(ssrc uint32, state MapperState) bool { calls++; return true }
+	cm.ForEach(f)
+
+	if calls != 0 {
+		t.Fatalf("expected zero calls, got %v", calls)
+	}
+}
+
+func TestMapper_ForEach_IncludesUninitializedStream(t *testing.T) {
+	sr := testSR{
+		ssrc:      uint32(0xdeadbeef),
+		clockRate: uint32(90000),
+	}
+
+	cm := newTestMapper(nil, &sr)
+
+	f := func(ssrc uint32, state MapperState) bool {
+		if state.Clock != Uninitialized {
+			t.Fatalf("expected Clock Uninitialized, got %s", ClockStateString(state.Clock))
+		}
+
+		if state.HasSenderReport {
+			t.Fatalf("expected HasSenderReport to be false, got true")
+		}
+
+		if state.ClockRate != sr.clockRate {
+			t.Fatalf("expected ClockRate %v, got %v", state.ClockRate, sr.clockRate)
+		}
+
+		if state.LastSRReceivedAt.IsZero() != true {
+			t.Fatalf("expected LastSRRecievedAt to be zero, got %v", state.LastSRReceivedAt)
+		}
+		return true
+	}
+	cm.ForEach(f)
+}
+
+func TestMapper_ForEach_ReportsAllStreams(t *testing.T) {
+	const clockRate = uint32(90000)
+
+	uninitSR := testSR{ssrc: 1, clockRate: clockRate}
+	anchoredSR := testSR{ssrc: 2, clockRate: clockRate}
+	lockedSR := testSR{ssrc: 3, clockRate: clockRate}
+
+	cm := newTestMapper(nil, nil)
+	cm.SetClockRate(uninitSR.ssrc, uninitSR.clockRate)
+	cm.SetClockRate(anchoredSR.ssrc, anchoredSR.clockRate)
+	cm.SetClockRate(lockedSR.ssrc, lockedSR.clockRate)
+
+	anchoredNTP := 1000.0
+	anchoredRTP := uint32(0)
+	anchoredHi, anchoredLo := ToNTPParts(anchoredNTP)
+	if err := cm.UpdateFromSR(anchoredSR.ssrc, anchoredRTP, anchoredHi, anchoredLo); err != nil {
+		t.Fatalf("UpdateFromSR anchored stream error = %v", err)
+	}
+
+	lockedNTP1 := 2000.0
+	lockedRTP1 := uint32(0)
+	lockedHi1, lockedLo1 := ToNTPParts(lockedNTP1)
+	if err := cm.UpdateFromSR(lockedSR.ssrc, lockedRTP1, lockedHi1, lockedLo1); err != nil {
+		t.Fatalf("UpdateFromSR locked stream #1 error = %v", err)
+	}
+
+	lockedNTP2 := 2001.0
+	lockedRTP2 := uint32(clockRate)
+	lockedHi2, lockedLo2 := ToNTPParts(lockedNTP2)
+	if err := cm.UpdateFromSR(lockedSR.ssrc, lockedRTP2, lockedHi2, lockedLo2); err != nil {
+		t.Fatalf("UpdateFromSR locked stream #2 error = %v", err)
+	}
+
+	got := make(map[uint32]MapperState)
+	cm.ForEach(func(ssrc uint32, state MapperState) bool {
+		got[ssrc] = state
+		return true
+	})
+
+	if len(got) != 3 {
+		t.Fatalf("ForEach returned %d streams, want 3: %+v", len(got), got)
+	}
+
+	uninitState := got[uninitSR.ssrc]
+	if uninitState.Clock != Uninitialized {
+		t.Fatalf("uninitialized Clock=%s, want %s", ClockStateString(uninitState.Clock), ClockStateString(Uninitialized))
+	}
+	if uninitState.HasSenderReport {
+		t.Fatal("uninitialized HasSenderReport=true, want false")
+	}
+
+	anchoredState := got[anchoredSR.ssrc]
+	if anchoredState.Clock != Anchored {
+		t.Fatalf("anchored Clock=%s, want %s", ClockStateString(anchoredState.Clock), ClockStateString(Anchored))
+	}
+	if !anchoredState.HasSenderReport {
+		t.Fatal("anchored HasSenderReport=false, want true")
+	}
+	if anchoredState.BaseRTP != uint64(anchoredRTP) {
+		t.Fatalf("anchored BaseRTP=%d, want %d", anchoredState.BaseRTP, anchoredRTP)
+	}
+	if anchoredState.BaseNTP != anchoredNTP {
+		t.Fatalf("anchored BaseNTP=%f, want %f", anchoredState.BaseNTP, anchoredNTP)
+	}
+
+	lockedState := got[lockedSR.ssrc]
+	if lockedState.Clock != Locked {
+		t.Fatalf("locked Clock=%s, want %s", ClockStateString(lockedState.Clock), ClockStateString(Locked))
+	}
+	if !lockedState.HasSenderReport {
+		t.Fatal("locked HasSenderReport=false, want true")
+	}
+	if lockedState.BaseRTP != uint64(lockedRTP2) {
+		t.Fatalf("locked BaseRTP=%d, want %d", lockedState.BaseRTP, lockedRTP2)
+	}
+	if lockedState.BaseNTP != lockedNTP2 {
+		t.Fatalf("locked BaseNTP=%f, want %f", lockedState.BaseNTP, lockedNTP2)
+	}
+	if lockedState.Degraded || lockedState.Discontinuity {
+		t.Fatalf("locked stream should be stable, got degraded=%v discontinuity=%v", lockedState.Degraded, lockedState.Discontinuity)
+	}
+}
+
+func TestMapper_ForEach_StopsWhenCallbackReturnsFalse(t *testing.T) {
+	cm := newTestMapper(nil, nil)
+	cm.SetClockRate(1, 90000)
+	cm.SetClockRate(2, 90000)
+	cm.SetClockRate(3, 90000)
+
+	calls := 0
+	cm.ForEach(func(uint32, MapperState) bool {
+		calls++
+		return false
+	})
+
+	if calls != 1 {
+		t.Fatalf("ForEach callback calls=%d, want 1", calls)
+	}
+}

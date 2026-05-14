@@ -49,6 +49,20 @@ const (
 	Locked
 )
 
+// ClockStateString returns a string represintation of the ClockState
+func ClockStateString(state ClockState) string {
+	switch state {
+	case Uninitialized:
+		return "Uninitialized"
+	case Anchored:
+		return "Anchored"
+	case Locked:
+		return "Locked"
+	default:
+		return "UnknownState"
+	}
+}
+
 func (wt *RTPWrapTracker) ExtendedRTP(ts uint32) (ext uint64) {
 	// Calculate extended RTP timestamp considering wraparounds
 	// Detect wraparound for 32-bit RTP timestamp if rtp_ts < baseRTP and difference > 2^31

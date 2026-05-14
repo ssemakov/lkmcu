@@ -332,6 +332,7 @@ func (cm *ClockMapper) ForEach(f func(ssrc uint32, state MapperState) bool) {
 			Discontinuity:    sc.discontinuity,
 			LastSRReceivedAt: sc.lastSRReceivedAt,
 			HasSenderReport:  !sc.lastSRReceivedAt.IsZero(),
+			Clock:            sc.state,
 		}
 		sc.mu.Unlock()
 		states[ssrc] = state
