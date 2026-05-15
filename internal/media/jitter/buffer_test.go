@@ -48,6 +48,24 @@ func TestBuffer_NewBuffer_DupeWindowConstraint(t *testing.T) {
 	NewBuffer(&m, logger, &cfg, nil)
 }
 
+func TestBuffer_NewBuffer_MaxReorderDepthConstraint(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic when MaxReorderDepth less or equal than zero, got none")
+		}
+	}()
+
+	m := clock.ClockMapper{}
+	logger := logging.NewNullLogger("east", "info")
+
+	cfg := Config{
+		DupeBufferSize:  10,
+		MaxReorderDepth: -1,
+	}
+
+	NewBuffer(&m, logger, &cfg, nil)
+}
+
 func newTestBuffer(cfg *Config, onUnderflow OnUnderflowHandler) (Buffer, *clock.ClockMapper) {
 	// logger := logging.NewNullLogger("test", "debug")
 	logger := logging.NewConsoleLogger("test", "debug")
