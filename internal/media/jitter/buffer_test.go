@@ -70,7 +70,6 @@ func TestBuffer_Push_Accepted_Before_SR(t *testing.T) {
 	packet := mediaPacket.Packet{Seq: 1}
 
 	status, err := buf.Push(ssrc, packet)
-
 	if err != nil {
 		t.Fatalf("no error expected, got %v", err)
 	}
@@ -98,7 +97,6 @@ func TestBuffer_Push_Accepted_After_SR(t *testing.T) {
 	p1 := mediaPacket.Packet{Seq: 1, RtpTs: p1RTP}
 
 	status, err := buf.Push(ssrc, p1)
-
 	if err != nil {
 		t.Fatalf("no error expected, got %v", err)
 	}
@@ -116,7 +114,6 @@ func TestBuffer_Push_Accepted_After_SR(t *testing.T) {
 	p2 := mediaPacket.Packet{Seq: 2, RtpTs: p2RTP}
 
 	status, err = buf.Push(ssrc, p2)
-
 	if err != nil {
 		t.Fatalf("no error expected, got %v", err)
 	}
@@ -145,14 +142,12 @@ func TestBuffer_Push_Duplicate(t *testing.T) {
 	p1 := mediaPacket.Packet{Seq: 1, RtpTs: p1RTP}
 
 	_, err := buf.Push(ssrc, p1)
-
 	if err != nil {
 		t.Fatalf("no error expected, got %v", err)
 	}
 
 	p2 := mediaPacket.Packet{Seq: 1, RtpTs: p1RTP}
 	status, err := buf.Push(ssrc, p2)
-
 	if err != nil {
 		t.Fatalf("no error expected, got %v", err)
 	}
@@ -181,7 +176,6 @@ func TestBuffer_Push_LateDrop(t *testing.T) {
 	p1 := mediaPacket.Packet{Seq: 1, RtpTs: p1RTP}
 
 	status, err := buf.Push(ssrc, p1)
-
 	if err != nil {
 		t.Fatalf("no error expected, got %v", err)
 	}
@@ -189,7 +183,6 @@ func TestBuffer_Push_LateDrop(t *testing.T) {
 	if status != StatusLateDrop {
 		t.Fatalf("want StatusLateDrop, got %v", StatusString(status))
 	}
-
 }
 
 func TestBuffer_Push_MapperDegraded(t *testing.T) {
@@ -216,7 +209,6 @@ func TestBuffer_Push_MapperDegraded(t *testing.T) {
 	p1 := mediaPacket.Packet{Seq: 1, RtpTs: p1RTP}
 
 	status, err := buf.Push(ssrc, p1)
-
 	if err != nil {
 		t.Fatalf("no error expected, got %v", err)
 	}
@@ -472,7 +464,6 @@ func TestBuffer_Target_NominalAndPerSSRC(t *testing.T) {
 	if buf.Target(ssrc) != buf.Config().Target {
 		t.Fatalf("after second SR want per-SSRC Target %v, got %v", buf.Config().Target, buf.Target(ssrc))
 	}
-
 }
 
 func TestSSRCBuffer_UpdateOccupancy(t *testing.T) {
@@ -484,14 +475,14 @@ func TestSSRCBuffer_UpdateOccupancy(t *testing.T) {
 		t.Fatalf("expected occupancy 0 for empty heap, got %v", sb.occupy)
 	}
 
-	sb.heap.PushPacket(&timedPacket{Packet: mediaPacket.Packet{Seq: 2}, PayloadTs: base.Add(10 * time.Millisecond)})
+	sb.heap.PushPacket(&timedPacket{Packet: mediaPacket.Packet{Seq: 2}, PayloadTS: base.Add(10 * time.Millisecond)})
 	sb.updateOccupancy()
 	if sb.occupy != 0 {
 		t.Fatalf("expected occupancy 0 for single packet, got %v", sb.occupy)
 	}
 
-	sb.heap.PushPacket(&timedPacket{Packet: mediaPacket.Packet{Seq: 10}, PayloadTs: base.Add(0)})
-	sb.heap.PushPacket(&timedPacket{Packet: mediaPacket.Packet{Seq: 1}, PayloadTs: base.Add(20 * time.Millisecond)})
+	sb.heap.PushPacket(&timedPacket{Packet: mediaPacket.Packet{Seq: 10}, PayloadTS: base.Add(0)})
+	sb.heap.PushPacket(&timedPacket{Packet: mediaPacket.Packet{Seq: 1}, PayloadTS: base.Add(20 * time.Millisecond)})
 	sb.updateOccupancy()
 
 	expected := 20 * time.Millisecond
@@ -550,7 +541,6 @@ func TestBuffer_DropsOldest_OverMaxTarget(t *testing.T) {
 			RtpTs: RTPAfter(clockRate, baseRTP, time.Duration(i)*10*time.Millisecond),
 		}
 		st, err := buf.Push(ssrc, p)
-
 		if err != nil {
 			t.Fatalf("Push error: %v", err)
 		}

@@ -8,15 +8,15 @@ import (
 
 type timedPacket struct {
 	packet.Packet
-	PayloadTs time.Time
+	PayloadTS time.Time
 }
 
 // Less reports whether this Packet should sort before the other Packet.
-// Packets are ordered first by PayloadTs, then by Seq to break ties.
+// Packets are ordered first by PayloadTS, then by Seq to break ties.
 // This ordering is used by the jitter buffer's packet heap.
 func (tp *timedPacket) Less(other *timedPacket) bool {
-	if tp.PayloadTs.Equal(other.PayloadTs) {
+	if tp.PayloadTS.Equal(other.PayloadTS) {
 		return tp.Seq < other.Seq
 	}
-	return tp.PayloadTs.Before(other.PayloadTs)
+	return tp.PayloadTS.Before(other.PayloadTS)
 }

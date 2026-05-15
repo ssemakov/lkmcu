@@ -206,8 +206,10 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet packet.Packet) (Status, error) 
 
 	// Initialize per-SSRC packet heap if not present
 	if !ok {
-		sb := SSRCBuffer{heap: &PacketHeap{}, mu: sync.Mutex{}, target: jb.cfg.Target,
-			recent: *common.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize), noSR: true}
+		sb := SSRCBuffer{
+			heap: &PacketHeap{}, mu: sync.Mutex{}, target: jb.cfg.Target,
+			recent: *common.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize), noSR: true,
+		}
 		jb.streams[ssrc] = &sb
 		sbuf = &sb
 	}
@@ -273,7 +275,7 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet packet.Packet) (Status, error) 
 
 	tp := timedPacket{
 		Packet:    packet,
-		PayloadTs: unixPts,
+		PayloadTS: unixPts,
 	}
 
 	sbuf.heap.PushPacket(&tp)
@@ -338,14 +340,14 @@ func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (packet.Packet, bool) {
 
 	cursor := sbuf.cursor(now)
 	// check if packet is ready to be popped based on current time and target buffer size
-	ready := tp.PayloadTs.Before(cursor) || tp.PayloadTs.Equal(cursor)
+	ready := tp.PayloadTS.Before(cursor) || tp.PayloadTS.Equal(cursor)
 
 	if !ready {
 		return packet.Packet{}, false
 	}
 
 	tp = sbuf.heap.PopPacket()
-	sbuf.lastPopPts = tp.PayloadTs
+	sbuf.lastPopPts = tp.PayloadTS
 	sbuf.lastPopAt = now
 	sbuf.updateOccupancy()
 	return tp.Packet, true
@@ -422,7 +424,7 @@ func (sbuf *SSRCBuffer) memoryPressure(ssrc uint32, cfg *Config) (bool, error) {
 
 	if overflow > 0 {
 		before := sbuf.heap.Len()
-		for i := 0; i < overflow; i++ {
+		for range overflow {
 			sbuf.heap.PopPacket()
 		}
 		sbuf.updateOccupancy()
@@ -454,7 +456,7 @@ func (sbuf *SSRCBuffer) updateOccupancy() {
 	newest := sbuf.heap.PeekMaxPacket()
 
 	if oldest != nil && newest != nil {
-		sbuf.occupy = newest.PayloadTs.Sub(oldest.PayloadTs)
+		sbuf.occupy = newest.PayloadTS.Sub(oldest.PayloadTS)
 	} else {
 		sbuf.occupy = 0
 	}

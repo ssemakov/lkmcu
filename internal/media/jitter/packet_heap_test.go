@@ -16,9 +16,9 @@ func newPacketHeap() *PacketHeap {
 }
 
 func TestPacketHeap(t *testing.T) {
-	p1 := &timedPacket{Packet: packet.Packet{Seq: 1}, PayloadTs: time.Unix(0, 1000)}
-	p2 := &timedPacket{Packet: packet.Packet{Seq: 2}, PayloadTs: time.Unix(0, 500)}
-	p3 := &timedPacket{Packet: packet.Packet{Seq: 3}, PayloadTs: time.Unix(0, 1500)}
+	p1 := &timedPacket{Packet: packet.Packet{Seq: 1}, PayloadTS: time.Unix(0, 1000)}
+	p2 := &timedPacket{Packet: packet.Packet{Seq: 2}, PayloadTS: time.Unix(0, 500)}
+	p3 := &timedPacket{Packet: packet.Packet{Seq: 3}, PayloadTS: time.Unix(0, 1500)}
 
 	ph := newPacketHeap()
 	ph.PushPacket(p1)
@@ -29,7 +29,7 @@ func TestPacketHeap(t *testing.T) {
 		t.Fatalf("Len=%d want=3", ph.Len())
 	}
 
-	// PopPacket should return packets in order of PayloadTs
+	// PopPacket should return packets in order of PayloadTS
 	popped := ph.PopPacket()
 	if popped.Seq != 2 {
 		t.Fatalf("first popped Seq=%d want=2", popped.Seq)
@@ -49,8 +49,8 @@ func TestPacketHeap(t *testing.T) {
 }
 
 func TestPacketHeap_PeekPacket(t *testing.T) {
-	p1 := &timedPacket{Packet: packet.Packet{Seq: 1}, PayloadTs: time.Unix(0, 1000)}
-	p2 := &timedPacket{Packet: packet.Packet{Seq: 2}, PayloadTs: time.Unix(0, 500)}
+	p1 := &timedPacket{Packet: packet.Packet{Seq: 1}, PayloadTS: time.Unix(0, 1000)}
+	p2 := &timedPacket{Packet: packet.Packet{Seq: 2}, PayloadTS: time.Unix(0, 500)}
 
 	ph := newPacketHeap()
 	ph.PushPacket(p1)
@@ -71,9 +71,9 @@ func TestPacketHeap_PeekPacket(t *testing.T) {
 }
 
 func TestPacketHeap_PeekMaxPacket(t *testing.T) {
-	p1 := &timedPacket{Packet: packet.Packet{Seq: 1}, PayloadTs: time.Unix(0, 1000)}
-	p2 := &timedPacket{Packet: packet.Packet{Seq: 2}, PayloadTs: time.Unix(0, 500)}
-	p3 := &timedPacket{Packet: packet.Packet{Seq: 3}, PayloadTs: time.Unix(0, 2000)}
+	p1 := &timedPacket{Packet: packet.Packet{Seq: 1}, PayloadTS: time.Unix(0, 1000)}
+	p2 := &timedPacket{Packet: packet.Packet{Seq: 2}, PayloadTS: time.Unix(0, 500)}
+	p3 := &timedPacket{Packet: packet.Packet{Seq: 3}, PayloadTS: time.Unix(0, 2000)}
 
 	ph := newPacketHeap()
 	ph.PushPacket(p1)
@@ -100,9 +100,9 @@ func TestPacketHeap_PeekMaxPacket(t *testing.T) {
 }
 
 func TestPacketHeap_EqualTimestamps(t *testing.T) {
-	p1 := &timedPacket{Packet: packet.Packet{Seq: 1}, PayloadTs: time.Unix(0, 1000)}
-	p2 := &timedPacket{Packet: packet.Packet{Seq: 2}, PayloadTs: time.Unix(0, 1000)}
-	p3 := &timedPacket{Packet: packet.Packet{Seq: 3}, PayloadTs: time.Unix(0, 1000)}
+	p1 := &timedPacket{Packet: packet.Packet{Seq: 1}, PayloadTS: time.Unix(0, 1000)}
+	p2 := &timedPacket{Packet: packet.Packet{Seq: 2}, PayloadTS: time.Unix(0, 1000)}
+	p3 := &timedPacket{Packet: packet.Packet{Seq: 3}, PayloadTS: time.Unix(0, 1000)}
 
 	ph := newPacketHeap()
 	ph.PushPacket(p2)
@@ -113,7 +113,7 @@ func TestPacketHeap_EqualTimestamps(t *testing.T) {
 		t.Fatalf("Len=%d want=3", ph.Len())
 	}
 
-	// PopPacket should return packets in order of Seq since PayloadTs are equal
+	// PopPacket should return packets in order of Seq since PayloadTS are equal
 	popped := ph.PopPacket()
 	if popped.Seq != 1 {
 		t.Fatalf("first popped Seq=%d want=1", popped.Seq)
