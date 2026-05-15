@@ -51,7 +51,7 @@ func (f *fakeWebrtcRemoteTrack) Kind() webrtc.RTPCodecType {
 }
 
 func (f *fakeWebrtcRemoteTrack) Codec() webrtc.RTPCodecParameters {
-	return webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{ClockRate: 90000}}
+	return webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{ClockRate: 90000, MimeType: "audio"}}
 }
 
 func TestRemoteTrackAdapter_ID(t *testing.T) {
@@ -128,6 +128,26 @@ func TestRemoteTrackAdapter_SSRC(t *testing.T) {
 	got := a.SSRC()
 	if got != 777 {
 		t.Fatalf("SSRC mismatch: want %d, got %d", 777, got)
+	}
+}
+
+func TestRemoteTrackAdapter_ClockRate(t *testing.T) {
+	fake := &fakeWebrtcRemoteTrack{ssrc: webrtcSSRC(777)}
+	a := &remoteTrackAdapter{track: fake}
+
+	got := a.ClockRate()
+	if got != 90000 {
+		t.Fatalf("ClockRate mismatch: want %d, got %d", 90000, got)
+	}
+}
+
+func TestRemoteTrackAdapter_MimeType(t *testing.T) {
+	fake := &fakeWebrtcRemoteTrack{ssrc: webrtcSSRC(777)}
+	a := &remoteTrackAdapter{track: fake}
+
+	got := a.MimeType()
+	if got != "audio" {
+		t.Fatalf("MimeType mismatch: want audio, got %v", got)
 	}
 }
 
