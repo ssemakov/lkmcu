@@ -242,6 +242,30 @@ func TestBuffer_Push_MapperDegraded(t *testing.T) {
 	}
 }
 
+func TestBuffer_Push_MapperError(t *testing.T) {
+	const (
+		ssrc      = uint32(0xdeadbeef)
+		clockRate = uint32(90000)
+	)
+
+	buf, m := newTestBuffer(nil, nil)
+	m.SetClockRate(ssrc, clockRate)
+
+	hi, lo := clock.ToNTPParts(1000.0)
+	if err := m.UpdateFromSR(ssrc, 0, hi, lo); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := buf.Push(ssrc, mediaPacket.Packet{Seq: 1, RtpTs: 0})
+	if err == nil {
+		t.Fatal("expected mapper error, got nil")
+	}
+
+	if status != StatusMapperError {
+		t.Fatalf("want StatusMapperError, got %v", StatusString(status))
+	}
+}
+
 func TestBuffer_Push_PacketsRearrangedAfterSR(t *testing.T) {
 	const (
 		ssrc      = uint32(0xdeadbeef)
@@ -422,7 +446,7 @@ func TestBuffer_Occupancy_Report(t *testing.T) {
 
 	// Push packets
 	numPackets := 5
-	for i := 0; i < numPackets; i++ {
+	for i := range numPackets {
 		p := mediaPacket.Packet{Seq: uint16(i), RtpTs: RTPAfter(clockRate, baseRTP, time.Duration(i)*10*time.Millisecond)}
 		buf.Push(ssrc, p)
 	}
@@ -553,7 +577,7 @@ func TestBuffer_DropsOldest_OverMaxTarget(t *testing.T) {
 
 	numPackets := 5
 	// push 5 packets 10ms apart, total occupancy 40ms > 30ms target
-	for i := 0; i < numPackets; i++ {
+	for i := range numPackets {
 		p := mediaPacket.Packet{
 			Seq:   uint16(i),
 			RtpTs: RTPAfter(clockRate, baseRTP, time.Duration(i)*10*time.Millisecond),
@@ -604,7 +628,7 @@ func TestBuffer_Push_MaxReorderDepthCap(t *testing.T) {
 
 	// Expect 2 packets to be dropped when pushing total of MaxReorderDepth + 2 packets
 	total := cfg.MaxReorderDepth + 2
-	for i := 0; i < total; i++ {
+	for i := range total {
 		if _, err := buf.Push(ssrc, mediaPacket.Packet{Seq: uint16(i)}); err != nil {
 			t.Fatalf("Push %d returned error: %v", i, err)
 		}
