@@ -190,6 +190,72 @@ func TestAgent_TranslatesLiveKitEventsToRoomChangedEvents(t *testing.T) {
 	}
 }
 
+func TestAgent_OnLiveKitTrackSubscribed(t *testing.T) {
+	t.Run("audio track creates pipeline", func(t *testing.T) {
+		agent := NewAgent(AgentConfig{
+			Logger: logging.NewNullLogger("test", "info"),
+		}, layout.DefaultLayoutView())
+		manager := &recordingTrackPipelineManager{}
+		agent.trackPipelineManager = manager
+
+		remoteTrack := fakeRemoteTrack{id: "t1", kind: "audio", ssrc: 1234}
+		receiver := &fakeReceiver{}
+		event := lk.TrackSubscribed{
+			PID:         "p1",
+			Identity:    "alice",
+			TID:         "t1",
+			Kind:        "audio",
+			RemoteTrack: remoteTrack,
+			Receiver:    receiver,
+		}
+
+		if err := agent.applyLiveKitEvent(event); err != nil {
+			t.Fatalf("applyLiveKitEvent() error = %v", err)
+		}
+
+		if manager.newTrackPipelineCalls != 1 {
+			t.Fatalf("NewTrackPipeline() calls = %d, want 1", manager.newTrackPipelineCalls)
+		}
+		if manager.remoteTrack.ID() != remoteTrack.ID() {
+			t.Fatalf("NewTrackPipeline() track ID = %s, want %s", manager.remoteTrack.ID(), remoteTrack.ID())
+		}
+		if manager.receiver != receiver {
+			t.Fatal("NewTrackPipeline() did not receive event receiver")
+		}
+		if got, ok := agent.roomSnap.SubCache["t1"]; !ok || got != DecisionAction("audio") {
+			t.Fatalf("SubCache[t1] = %q (present=%v), want audio", got, ok)
+		}
+	})
+
+	t.Run("non-audio track does not create pipeline", func(t *testing.T) {
+		agent := NewAgent(AgentConfig{
+			Logger: logging.NewNullLogger("test", "info"),
+		}, layout.DefaultLayoutView())
+		manager := &recordingTrackPipelineManager{}
+		agent.trackPipelineManager = manager
+
+		event := lk.TrackSubscribed{
+			PID:         "p1",
+			Identity:    "alice",
+			TID:         "t1",
+			Kind:        "video",
+			RemoteTrack: fakeRemoteTrack{id: "t1", kind: "video", ssrc: 1234},
+			Receiver:    &fakeReceiver{},
+		}
+
+		if err := agent.applyLiveKitEvent(event); err != nil {
+			t.Fatalf("applyLiveKitEvent() error = %v", err)
+		}
+
+		if manager.newTrackPipelineCalls != 0 {
+			t.Fatalf("NewTrackPipeline() calls = %d, want 0", manager.newTrackPipelineCalls)
+		}
+		if got, ok := agent.roomSnap.SubCache["t1"]; !ok || got != DecisionAction("video") {
+			t.Fatalf("SubCache[t1] = %q (present=%v), want video", got, ok)
+		}
+	})
+}
+
 func TestAgent_applyEvent_CancelsOnRoomDisconnected(t *testing.T) {
 	agent := NewAgent(AgentConfig{
 		Logger: logging.NewNullLogger("test", "info"),
@@ -244,6 +310,29 @@ func (noopTrackPipelineManager) NewTrackPipeline(lk.RemoteTrack, lk.Receiver) (p
 func (noopTrackPipelineManager) RemoveTrackPipeline(string) error {
 	return nil
 }
+
+type recordingTrackPipelineManager struct {
+	newTrackPipelineCalls int
+	remoteTrack           lk.RemoteTrack
+	receiver              lk.Receiver
+}
+
+func (m *recordingTrackPipelineManager) NewTrackPipeline(track lk.RemoteTrack, receiver lk.Receiver) (processor.TrackPipeline, error) {
+	m.newTrackPipelineCalls++
+	m.remoteTrack = track
+	m.receiver = receiver
+	return nil, nil
+}
+
+func (m *recordingTrackPipelineManager) RemoveTrackPipeline(string) error {
+	return nil
+}
+
+type fakeReceiver struct{}
+
+func (fakeReceiver) ReadSenderReports() ([]packet.SenderReport, error) { return nil, nil }
+func (fakeReceiver) SetReadDeadline(time.Time) error                   { return nil }
+func (fakeReceiver) Stop() error                                       { return nil }
 
 // Mock lk.Client for testing
 type mockLkClient struct {

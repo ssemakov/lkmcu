@@ -84,13 +84,27 @@ func newTestMapper() *clock.ClockMapper {
 	return clock.NewClockMapper(metrics.NewMetrics(), logger, clock.DefaultClockMapperConfig())
 }
 
-type fakeCodecFactory struct{}
+type fakeCodecFactory struct {
+	depaketizerErr error
+	decoderErr     error
 
-func (fakeCodecFactory) CreateDecoder(mimeType string) (decoders.Decoder, error) {
+	newDepaketizerCalls int
+	newDecoderCalls     int
+}
+
+func (f *fakeCodecFactory) NewDecoder(mimeType string) (decoders.Decoder, error) {
+	f.newDecoderCalls++
+	if f.decoderErr != nil {
+		return nil, f.decoderErr
+	}
 	return &fakeDecoder{}, nil
 }
 
-func (fakeCodecFactory) CreateDepaketizer(mimeType string) (depaketizers.Depaketizer, error) {
+func (f *fakeCodecFactory) NewDepaketizer(mimeType string) (depaketizers.Depaketizer, error) {
+	f.newDepaketizerCalls++
+	if f.depaketizerErr != nil {
+		return nil, f.depaketizerErr
+	}
 	return &fakeDepaketizer{}, nil
 }
 
@@ -164,6 +178,93 @@ func TestDefaultTrackPipelineFactory_NewTrackPipeline_CodecFactoryFallback(t *te
 	}
 	if _, ok := got.decoder.(*decoders.OpusDecoder); !ok {
 		t.Fatalf("expected DefaultDecoder, got %T", got.decoder)
+	}
+}
+
+func TestDefaultTrackPipelineFactory_NewTrackPipeline_CodecFactoryNewDepacketizerError(t *testing.T) {
+	wantErr := errors.New("new depaketizer failed")
+	codecFactory := &fakeCodecFactory{depaketizerErr: wantErr}
+	factory := &DefaultTrackPipelineFactory{
+		Ctx:          context.Background(),
+		Logger:       logging.NewNullLogger("test", "null"),
+		CodecFactory: codecFactory,
+	}
+
+	pipeline, err := factory.NewTrackPipeline(fakeTrack{id: "t1"}, fakeReceiver{})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("NewTrackPipeline() error = %v, want %v", err, wantErr)
+	}
+	if pipeline != nil {
+		t.Fatalf("expected nil pipeline, got %#v", pipeline)
+	}
+	if codecFactory.newDepaketizerCalls != 1 {
+		t.Fatalf("NewDepaketizer() calls = %d, want 1", codecFactory.newDepaketizerCalls)
+	}
+	if codecFactory.newDecoderCalls != 0 {
+		t.Fatalf("NewDecoder() calls = %d, want 0", codecFactory.newDecoderCalls)
+	}
+}
+
+func TestDefaultTrackPipelineFactory_NewTrackPipeline_CodecFactoryNewDecoderError(t *testing.T) {
+	wantErr := errors.New("new decoder failed")
+	codecFactory := &fakeCodecFactory{decoderErr: wantErr}
+	factory := &DefaultTrackPipelineFactory{
+		Ctx:          context.Background(),
+		Logger:       logging.NewNullLogger("test", "null"),
+		CodecFactory: codecFactory,
+	}
+
+	pipeline, err := factory.NewTrackPipeline(fakeTrack{id: "t1"}, fakeReceiver{})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("NewTrackPipeline() error = %v, want %v", err, wantErr)
+	}
+	if pipeline != nil {
+		t.Fatalf("expected nil pipeline, got %#v", pipeline)
+	}
+	if codecFactory.newDepaketizerCalls != 1 {
+		t.Fatalf("NewDepaketizer() calls = %d, want 1", codecFactory.newDepaketizerCalls)
+	}
+	if codecFactory.newDecoderCalls != 1 {
+		t.Fatalf("NewDecoder() calls = %d, want 1", codecFactory.newDecoderCalls)
+	}
+}
+
+func TestTrackPipeline_Start_SetClockRate(t *testing.T) {
+	mapper := newTestMapper()
+
+	track, receiver, err := MakeRTPTrackAndReceiver(
+		TimeoutRTPTrack,
+		EOFReceiver,
+	)
+	if err != nil {
+		t.Fatalf("MakeRTPTrackAndReceiver() error = %v", err)
+	}
+
+	ctx := context.Background()
+	factory := &DefaultTrackPipelineFactory{
+		Ctx:    ctx,
+		Config: DefaultTrackPipelineConfig(),
+		Logger: logging.NewNullLogger("test", "null"),
+		Mapper: mapper,
+		Buffer: noopBuffer{},
+	}
+	p, err := factory.NewTrackPipeline(track, receiver)
+	if err != nil {
+		t.Fatalf("NewTrackPipeline() error = %v", err)
+	}
+
+	p.Start()
+	defer p.Stop()
+
+	state := mapper.State(track.SSRC())
+	if state.ClockRate != track.ClockRate() {
+		t.Fatalf("ClockRate = %d, want %d", state.ClockRate, track.ClockRate())
+	}
+	if state.Clock != clock.Uninitialized {
+		t.Fatalf("Clock = %v, want %v before sender report", state.Clock, clock.Uninitialized)
+	}
+	if state.HasSenderReport {
+		t.Fatal("HasSenderReport = true, want false before sender report")
 	}
 }
 
