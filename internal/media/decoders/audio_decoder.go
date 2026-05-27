@@ -6,7 +6,7 @@ import (
 	"github.com/ssemakov/lkmcu/internal/media/depaketizers"
 )
 
-// Output of audio depacketization, input to audio decode.
+// EncodedAudioUnit contains output of audio depacketization, that servies as input to audio decode.
 type EncodedAudioUnit struct {
 	Codec      CodecID
 	Payload    []byte
@@ -23,7 +23,7 @@ type PCMFormat struct {
 	SampleType string
 }
 
-// Fixed internal mixer/render quantum.
+// PCMBlock is a fixed internal mixer/render quantum.
 type PCMBlock struct {
 	Format       PCMFormat
 	Samples      []float32
@@ -33,7 +33,7 @@ type PCMBlock struct {
 	Concealed    bool // PLC / silence / synthesized
 }
 
-// Basic Audio decoder interface, to be implemented by specific codec decoders (e.g., OpusDecoder)
+// AudioDecoder is a basic Audio decoder interface, to be implemented by specific codec decoders (e.g., OpusDecoder)
 type AudioDecoder interface {
 	Open() error
 	Close() error

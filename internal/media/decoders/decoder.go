@@ -14,7 +14,7 @@ const (
 	CodecH264 CodecID = "h264"
 )
 
-// Common timing/continuity metadata carried into decode.
+// DecodeMeta represents common timing/continuity metadata carried into decode.
 type DecodeMeta struct {
 	SSRC          uint32
 	RTPTime       uint32
