@@ -176,7 +176,7 @@ func Diff(cur []*livekit.Subscription, decs []Decision) []Operations {
 			}
 
 			if !found {
-				// TODO change the quality layer and update if needed
+				// TODO: change the quality layer and update if needed
 				ops = append(ops, &SubscribeOp{TrackID: d.TrackID, PID: d.PID, Action: d.Action, Reason: d.Reason})
 			}
 		case Paused:

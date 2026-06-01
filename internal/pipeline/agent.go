@@ -102,12 +102,12 @@ func (a *Agent) Run(ctx context.Context) error {
 			return runCtx.Err()
 
 		case <-a.tick.C:
-			a.reconcileState(runCtx)
+			a.reconcileState()
 
 		case ev := <-a.evCh:
 			lg.Infof("event: %v", logging.FormatValue(ev))
 			a.applyEvent(ev)
-			a.reconcileState(runCtx)
+			a.reconcileState()
 		}
 	}
 }
@@ -236,9 +236,6 @@ func (a *Agent) applyLiveKitEvent(ev lk.Event) error {
 			return fmt.Errorf("remove track pipeline %s: %w", lkEvt.TID, err)
 		}
 
-		if err := a.roomSnap.DeleteTrack(lkEvt.PID, lkEvt.TID); err != nil {
-			return fmt.Errorf("track unsubscribed: %s", err)
-		}
 		a.roomSnap.RemoveSubCache(lkEvt.TID)
 	default:
 		a.cfg.Logger.Debugf("ignoring LiveKit event: %s", logging.FormatValue(lkEvt))
@@ -248,7 +245,7 @@ func (a *Agent) applyLiveKitEvent(ev lk.Event) error {
 }
 
 // reconcileState decides and logs the subscription operations required to match desired layout state.
-func (a *Agent) reconcileState(ctx context.Context) {
+func (a *Agent) reconcileState() {
 	// Decide changes based on the current layout and policy
 	a.cfg.Logger.Debugf("Reconciling state. Room snapshot: %v", logging.FormatValue(a.roomSnap))
 

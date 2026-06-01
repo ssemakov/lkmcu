@@ -482,9 +482,6 @@ func TestAgent_applyEvent(t *testing.T) {
 			event: lk.TrackUnsubscribed{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
 			assert: func(t *testing.T, a *Agent) {
 				t.Helper()
-				if _, ok := a.roomSnap.Tracks["t1"]; ok {
-					t.Fatal("track should be removed after TrackUnsubscribed")
-				}
 				if _, ok := a.roomSnap.SubCache["t1"]; ok {
 					t.Fatal("subscription cache should be removed after TrackUnsubscribed")
 				}
@@ -607,9 +604,8 @@ func TestAgent_reconcileState(t *testing.T) {
 
 			agent.roomSnap = tc.initialSnap
 			mockClient.subs = tc.initialSubs
-			ctx := t.Context()
 
-			agent.reconcileState(ctx)
+			agent.reconcileState()
 
 			if diff := cmp.Diff(tc.expectedSubs, mockClient.subs); diff != "" {
 				t.Errorf("unexpected subscriptions after reconciliation (-want +got):\n%s", diff)
