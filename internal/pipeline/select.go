@@ -182,7 +182,7 @@ func Diff(cur []*livekit.Subscription, decs []Decision) []Operations {
 		case Paused:
 			for _, s := range cur {
 				if s.TID == d.TrackID {
-					return []Operations{&UnsubscribeOp{TrackID: d.TrackID, PID: d.PID, Reason: d.Reason}}
+					ops = append(ops, &UnsubscribeOp{TrackID: d.TrackID, PID: d.PID, Reason: d.Reason})
 				}
 			}
 		}
