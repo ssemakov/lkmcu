@@ -7,9 +7,9 @@ Describe the buffering strategy that smooths RTP packet arrival variance before 
 ## Goals
 
 - Provide stable playout for audio/video under typical network jitter using baseline latency of 80–120 ms.
-- Adapt buffer depth based on measured jitter while keeping latency bounded.
+- Keep latency bounded with a fixed nominal target and a widened target while the clock mapper is degraded.
 - Handle late and duplicate packets deterministically with clear observability.
-- Offer configuration knobs per media type.
+- Offer configuration knobs through `jitter.Config`.
 
 ## Mental Model
 
@@ -43,23 +43,22 @@ Any arriving packet can be
 1. **Ingress**: Jitter buffer receives RTP packets tagged with master-clock presentation timestamps from the mapper.
 2. **Queueing**: Packets stored in per-SSRC heaps indexed by timestamp (secondary key: sequence number).
 3. **Playback Controller**: Maintains playout cursor on master clock, releases packets when `packet_pts ≤ cursor`.
-4. **Adaptation Loop**: Observes inter-arrival variance and adjusts target depth.
-5. **Integration**: Decoders/mixers `Pop()` frames aligned to cursor; drift corrections from mapper influence cursor speed but not buffer internals.
+4. **Target Control**: Uses the nominal target in steady state and widens to `MaxTarget` when the mapper reports degraded timing.
+5. **Integration**: Track pipelines `Pop()` packets aligned to the cursor, then pass them through depacketization and decode.
 
 ## Configuration Defaults
 
-| Parameter           | Audio Default | Video Default | Notes                                                |
-| ------------------- | ------------- | ------------- | ---------------------------------------------------- |
-| `initial_target_ms` | 80            | 100           | Buffer fill depth before first playout               |
-| `min_target_ms`     | 40            | 60            | Minimum steady-state latency                         |
-| `max_target_ms`     | 160           | 200           | Cap during congestion                                |
-| `growth_step_ms`    | 10            | 20            | Increment when jitter exceeds threshold              |
-| `shrink_step_ms`    | 5             | 10            | Decay toward `min_target_ms` in stable periods       |
-| `late_drop_ms`      | 20            | 33            | Drop if packet lag beyond playout cursor + threshold |
-| `max_reorder_depth` | 50 packets    | 100 packets   | Guard against unbounded memory                       |
-| `rebuffer_burst_ms` | 15            | 25            | Pause window when underflow detected                 |
+| Config field      | Default    | Notes                                           |
+| ----------------- | ---------- | ----------------------------------------------- |
+| `Target`          | 80 ms      | Nominal playout depth in steady state           |
+| `MaxTarget`       | 200 ms     | Depth used while mapper timing is degraded      |
+| `LateDrop`        | 20 ms      | Drop if packet lags beyond cursor + threshold   |
+| `RebufferBurst`   | 20 ms      | Cursor freeze window when underflow is detected |
+| `UndeflowGuard`   | 20 ms      | Empty-buffer duration before underflow handling |
+| `MaxReorderDepth` | 50 packets | Maximum retained packet count per SSRC          |
+| `DupeBufferSize`  | 100 keys   | Sliding duplicate-detection window per SSRC     |
 
-Expose these values through `internal/config` (e.g., `media.jitter.audio.initial_target_ms`).
+These values are currently provided by `internal/media/jitter.DefaultConfig()` and passed directly to `NewBuffer`.
 
 ## Runtime Behavior
 
@@ -70,34 +69,37 @@ Expose these values through `internal/config` (e.g., `media.jitter.audio.initial
 - On the first SR (`Uninitialized -> Anchored` in the mapper), the buffer flushes all pre-SR packets and starts fresh on the mapper-derived RTP→NTP timeline.
 - Startup therefore does not attempt to salvage or remap pre-SR packets; it prefers a short startup loss over mixing arrival-time and anchored-time packets in one heap.
 
-### Adaptive Depth Control
+### Target Depth Control
 
-- Track RMS jitter over sliding window (e.g., 500 ms, 50 packets).
-- If RMS > `jitter_high_threshold` (default 15 ms audio, 20 ms video), increase `target_ms` by `growth_step_ms` up to `max_target_ms`.
-- If RMS < `jitter_low_threshold` (half of high threshold) for `stable_period` (e.g., 3 s), decay `target_ms` by `shrink_step_ms` toward `min_target_ms`.
-- Publish metric `media_jitter_target_ms` and logs on significant changes (> 20 ms delta).
+- In steady state, each SSRC uses `Target`.
+- If the clock mapper reports degraded timing, that SSRC widens immediately to `MaxTarget`.
+- When mapper timing recovers, the SSRC returns to `Target`.
+- If occupancy grows beyond the active target, the buffer drops oldest packets until occupancy is within bounds.
+- RMS (Root Mean Square) jitter tracking, gradual growth/shrink, and metrics are future work.
 
 ### Packet Admission
 
-- `Push(packet)` path:
-  1. Validate timestamp monotonicity relative to mapper; reject if conversion degraded beyond `mapper_extrapolation_limit`.
-  2. Drop duplicates (same `{timestamp, sequence}`) → increment `media_jitter_duplicates_total`.
-  3. If `packet_pts < cursor - late_drop_ms`, drop and increment `media_jitter_late_drops_total`.
-  4. Insert into min-heap keyed by `(packet_pts, sequence)`.
+- `Push(ssrc, packet)` path:
+  1. Read mapper state and convert RTP timestamp to NTP time when the mapper is anchored.
+  2. If the mapper is uninitialized, hold packets in `noSR` mode using arrival time only; these packets are flushed when the first SR arrives.
+  3. Return `StatusMapperError` for mapper conversion errors unless the mapper is degraded/discontinuous and still provides a usable best-effort timestamp.
+  4. Drop duplicates using `{presentation_timestamp, sequence}`.
+  5. Drop packets older than `cursor - LateDrop`.
+  6. Insert into the min-heap keyed by `(presentation_timestamp, sequence)`.
+  7. Enforce `MaxReorderDepth` and active target occupancy by dropping oldest packets.
 
 ### Playout
 
-- `Pop(now)` advances cursor = `now + playout_offset`, where `playout_offset` tracks current `target_ms`.
+- `Pop(ssrc, now)` uses cursor = `now - target`, where `target` is either `Target` or `MaxTarget`.
 - Release next packet when heap head `packet_pts ≤ cursor`.
-- If heap empty and cursor advanced beyond last packet by `underflow_guard_ms` (e.g., 5 ms), trigger underflow handling:
-  - Pause cursor advancement for `rebuffer_burst_ms`.
-  - Optionally request keyframe for video.
-  - Increment `media_jitter_underflows_total` and emit warning log.
+- If the heap is empty for longer than `UndeflowGuard` after the last pop, trigger underflow handling:
+  - Freeze cursor advancement for `RebufferBurst`.
+  - Invoke the configured `OnUnderflowHandler` once for that underflow window.
 
 ### Degraded Mode
 
 - When mapper reports SR outage or extrapolation beyond window, buffer widens `target_ms` to `max_target_ms` immediately.
-- If degraded > configurable timeout (e.g., 30 s), escalate to control plane; consider tearing down track.
+- Escalation beyond widening/logging is future work.
 
 ## Interfaces
 
@@ -132,8 +134,10 @@ type Buffer interface {
   - `media_jitter_underflows_total`
   - `media_jitter_startup_duration_ms`
 - Logs
-  - Buffer widening/shrinking events (rate-limited).
-  - Underflow warnings with current occupancy and drift state.
+  - Buffer widening when mapper is degraded.
+  - Late drops, memory pressure, and occupancy trims.
+
+Metric integration listed here is planned; `internal/metrics` currently contains placeholders for this area.
 
 ## Integration & Dependencies
 
@@ -144,13 +148,15 @@ type Buffer interface {
 
 ## Failure Modes & Mitigations
 
-- **Sustained High Jitter**: Buffer clamps at `max_target_ms`; escalate via control plane to downgrade quality or reconnect.
+- **Sustained High Jitter**: Buffer clamps occupancy at the active target by dropping oldest packets.
 - **Mapper Degradation**: Enter degraded mode, widen buffer, log, and consider resync.
 - **Memory Pressure**: Enforce `max_reorder_depth`; if exceeded, drop oldest packets and log `ERROR` with SSRC.
-- **Duplicate Flood**: Rate-limit logs; consider upstream mitigation if duplicates exceed threshold.
+- **Duplicate Flood**: Drop duplicates through the sliding duplicate key buffer; upstream mitigation is future work.
 
 ## Future Work
 
 - Experiment with per-participant latency tiers (active speaker vs passive tiles).
 - Integrate forward error correction (FEC) hints to better utilize stored packets.
 - Evaluate machine-learning based jitter prediction to pre-emptively adjust target depth.
+- Add per-media jitter configs and adaptive RMS-based target growth/shrink.
+- Export jitter metrics through `internal/metrics`.
