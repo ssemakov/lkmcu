@@ -90,7 +90,7 @@ func TestTrackPipelineManager_NewTrackPipeline(t *testing.T) {
 	track := fakeTrack{id: "t1"}
 	receiver := fakeReceiver{}
 
-	got, err := m.NewTrackPipeline(track, receiver)
+	got, err := m.NewTrackPipeline("t1", track, receiver)
 	if err != nil {
 		t.Fatalf("NewTrackPipeline() error = %v", err)
 	}
@@ -117,7 +117,7 @@ func TestTrackPipelineManager_NewTrackPipeline_audioLoop(t *testing.T) {
 	track := fakeTrack{id: "t1"}
 	receiver := fakeReceiver{}
 
-	_, err := m.NewTrackPipeline(track, receiver)
+	_, err := m.NewTrackPipeline("t1", track, receiver)
 	if err != nil {
 		t.Fatalf("NewTrackPipeline() error = %v", err)
 	}

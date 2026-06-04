@@ -17,7 +17,7 @@ import (
 // TrackPipelineManager manages the lifecycle of track pipelines for subscribed tracks.
 type TrackPipelineManager interface {
 	// NewTrackPipeline creates a new track pipeline for the given remote track and starts processing it.
-	NewTrackPipeline(track livekit.RemoteTrack, receiver livekit.Receiver) (TrackPipeline, error)
+	NewTrackPipeline(trackID string, track livekit.RemoteTrack, receiver livekit.Receiver) (TrackPipeline, error)
 	// RemoveTrackPipeline stops and removes the track pipeline associated with the given track ID.
 	RemoveTrackPipeline(trackID string) error
 }
@@ -71,7 +71,7 @@ func NewTrackPipelineManagerWithFactory(factory TrackPipelineFactory, clockMappe
 	}
 }
 
-func (m *trackPipelineManager) NewTrackPipeline(track livekit.RemoteTrack, receiver livekit.Receiver) (TrackPipeline, error) {
+func (m *trackPipelineManager) NewTrackPipeline(trackID string, track livekit.RemoteTrack, receiver livekit.Receiver) (TrackPipeline, error) {
 	pipeline, err := m.factory.NewTrackPipeline(track, receiver)
 	if err != nil {
 		return nil, err
@@ -80,8 +80,8 @@ func (m *trackPipelineManager) NewTrackPipeline(track livekit.RemoteTrack, recei
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.pipelines[track.ID()] = pipeline
-	m.pipelines[track.ID()].Start()
+	m.pipelines[trackID] = pipeline
+	m.pipelines[trackID].Start()
 	return pipeline, nil
 }
 

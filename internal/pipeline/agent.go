@@ -227,7 +227,7 @@ func (a *Agent) applyLiveKitEvent(ev lk.Event) error {
 		}
 		// TODO: introduce retry policy and attempt on next reconcile cycle if we failed to crate pipeline.
 		// Look at what are the reasons for possible failure.
-		_, err := a.trackPipelineManager.NewTrackPipeline(lkEvt.RemoteTrack, lkEvt.Receiver)
+		_, err := a.trackPipelineManager.NewTrackPipeline(lkEvt.TID, lkEvt.RemoteTrack, lkEvt.Receiver)
 		if err != nil {
 			return fmt.Errorf("track subscribed: cannot create track pipeline %s: %w", lkEvt.TID, err)
 		}

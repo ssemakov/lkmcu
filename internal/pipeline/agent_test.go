@@ -303,7 +303,7 @@ func (f fakeRemoteTrack) SetReadDeadline(time.Time) error { return nil }
 
 type noopTrackPipelineManager struct{}
 
-func (noopTrackPipelineManager) NewTrackPipeline(lk.RemoteTrack, lk.Receiver) (processor.TrackPipeline, error) {
+func (noopTrackPipelineManager) NewTrackPipeline(string, lk.RemoteTrack, lk.Receiver) (processor.TrackPipeline, error) {
 	return nil, nil
 }
 
@@ -317,7 +317,7 @@ type recordingTrackPipelineManager struct {
 	receiver              lk.Receiver
 }
 
-func (m *recordingTrackPipelineManager) NewTrackPipeline(track lk.RemoteTrack, receiver lk.Receiver) (processor.TrackPipeline, error) {
+func (m *recordingTrackPipelineManager) NewTrackPipeline(trackID string, track lk.RemoteTrack, receiver lk.Receiver) (processor.TrackPipeline, error) {
 	m.newTrackPipelineCalls++
 	m.remoteTrack = track
 	m.receiver = receiver
