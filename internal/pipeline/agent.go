@@ -299,7 +299,7 @@ func (a *Agent) removeTrackPipelines(pid string) error {
 func (a *Agent) removeTrackPipeline(tid string) error {
 	err := a.trackPipelineManager.RemoveTrackPipeline(tid)
 
-	if errors.Is(err, processor.ErrPipekNotFound) {
+	if errors.Is(err, processor.ErrPipeNotFound) {
 		a.cfg.Logger.Debugf("%v, TrackID: %s", err, tid)
 		return nil
 	}

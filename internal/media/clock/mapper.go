@@ -13,8 +13,6 @@ import (
 	"github.com/ssemakov/lkmcu/internal/metrics"
 )
 
-// type
-
 // MapperState returned by RTPToNTP for observability
 type MapperState struct {
 	SRAge            time.Duration

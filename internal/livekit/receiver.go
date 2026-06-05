@@ -10,7 +10,6 @@ import (
 )
 
 type Receiver interface {
-	// ReadRTCP() ([]rtcp.Packet, error)
 	ReadSenderReports() ([]packet.SenderReport, error)
 	SetReadDeadline(t time.Time) error
 	Stop() error
