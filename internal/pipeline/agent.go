@@ -115,54 +115,60 @@ func (a *Agent) Run(ctx context.Context) error {
 // consumeLiveKitEvents streams LiveKit events into the agent's event channel until cancellation.
 func (a *Agent) consumeLiveKitEvents(ctx context.Context, cancel context.CancelFunc) {
 	lg := a.cfg.Logger
+	var pending lk.Event
+
 	for {
-		select {
-		case <-ctx.Done():
+		var e lk.Event
+		if pending != nil {
+			e, pending = pending, nil
+		} else {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-a.lk.Events():
+				if !ok {
+					lg.Infof("LiveKit event channel closed")
+					return
+				}
+				e = ev
+			}
+		}
+		switch evt := e.(type) {
+		case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished, lk.TrackSubscribed, lk.TrackUnsubscribed:
+			lg.Infof("LiveKit event: %s", logging.FormatValue(e))
+			roomEvt := RoomChangedEvent{LkEvents: []lk.Event{e}}
+		drain:
+			for {
+				select {
+				case nextEvt, ok := <-a.lk.Events():
+					if !ok {
+						lg.Infof("LiveKit event channel closed")
+						a.evCh <- roomEvt
+						return
+					}
+					switch nextEvt.(type) {
+					case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
+						lg.Infof("coalescing LiveKit event: %s", logging.FormatValue(nextEvt))
+						roomEvt.LkEvents = append(roomEvt.LkEvents, nextEvt)
+					default:
+						pending = nextEvt
+						break drain
+					}
+				default:
+					break drain
+				}
+			}
+			a.evCh <- roomEvt
+		case lk.RoomDisconnected:
+			lg.Infof("Room disconnected, reason: %v", evt.Reason)
+			cancel()
 			return
-		case e, ok := <-a.lk.Events():
-			if !ok {
-				lg.Infof("LiveKit event channel closed")
-				return
-			}
-			switch evt := e.(type) {
-			case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished, lk.TrackSubscribed, lk.TrackUnsubscribed:
-				lg.Infof("LiveKit event: %s", logging.FormatValue(e))
-				a.evCh <- RoomChangedEvent{LkEvents: []lk.Event{e}}
-			// TODO: coalesce multiple ParticipantJoined/Left, TrackPublished/Unpublished events into one RoomChangedEvent
-			// The idea is to pull as many events as possible from the channel without blocking
-			// and then push a single RoomChangedEvent to the event channel.
-			// This way we avoid excessive reconciliations when many participants join/leave or publish/unpublish tracks at once.
-			// Something like this:
-			// ```
-			// for {
-			// 	select {
-			// 	case e2 := <-a.lk.Events():
-			// 		switch e2.(type) {
-			// 		case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
-			// 			lg.Infof("coalescing LiveKit event: %s", logging.FormatValue(e2))
-			// 		default:
-			// 			// push back the event for later processing
-			// 			a.lk.PushBackEvent(e2)
-			// 			break
-			// 		}
-			// 	default:
-			// 		break
-			// 	}
-			// }
-			// ```
-			case lk.RoomDisconnected:
-				lg.Infof("Room disconnected, reason: %v", evt.Reason)
-				cancel()
-				return
-			case lk.RoomClosed:
-				lg.Infof("Room closed, stopping agent")
-				cancel()
-				return
-			default:
-				lg.Debugf("ignoring LiveKit event: %s", logging.FormatValue(evt))
-			}
+		case lk.RoomClosed:
+			lg.Infof("Room closed, stopping agent")
+			cancel()
+			return
 		default:
-			time.Sleep(100 * time.Millisecond)
+			lg.Debugf("ignoring LiveKit event: %s", logging.FormatValue(evt))
 		}
 	}
 }
