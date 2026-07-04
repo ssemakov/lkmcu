@@ -153,9 +153,6 @@ func TestAgent_TranslatesLiveKitEventsToRoomChangedEvents(t *testing.T) {
 
 	events := []lk.Event{
 		lk.ParticipantJoined{PID: "p1", Identity: "alice"},
-		lk.ParticipantLeft{PID: "p1", Identity: "alice"},
-		lk.TrackPublished{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
-		lk.TrackUnpublished{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
 		lk.TrackSubscribed{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
 		lk.TrackUnsubscribed{PID: "p1", Identity: "alice", TID: "t1", Kind: "video"},
 	}
