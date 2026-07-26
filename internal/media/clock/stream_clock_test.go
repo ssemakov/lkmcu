@@ -1,6 +1,9 @@
 package clock
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestRTPWrapTracker_NoWrapMonotonic(t *testing.T) {
 	var wt RTPWrapTracker
@@ -79,5 +82,150 @@ func TestRTPWrapTracker_ThresholdExactlyHalfRange_NoWrap(t *testing.T) {
 	}
 	if wt.wraps != 0 {
 		t.Fatalf("wraps=%d want=0", wt.wraps)
+	}
+}
+
+func TestStreamClock_AnchorInitializesState(t *testing.T) {
+	sc := StreamClock{
+		degraded:      true,
+		discontinuity: true,
+		state:         Uninitialized,
+	}
+
+	const (
+		rtpTS = uint32(12345)
+		ntpTS = 1000.25
+		rate  = uint32(90000)
+	)
+
+	sc.SetClockRate(rate)
+	sc.Anchor(rtpTS, ntpTS)
+
+	if sc.state != Anchored {
+		t.Fatalf("state=%v want=%v", sc.state, Anchored)
+	}
+	if sc.baseRTP != uint64(rtpTS) {
+		t.Fatalf("baseRTP=%d want=%d", sc.baseRTP, rtpTS)
+	}
+	if sc.baseNTP != ntpTS {
+		t.Fatalf("baseNTP=%f want=%f", sc.baseNTP, ntpTS)
+	}
+	if sc.lastNTPOutput != ntpTS {
+		t.Fatalf("lastNTPOutput=%f want=%f", sc.lastNTPOutput, ntpTS)
+	}
+	if sc.wrapTracker.lastRTP != rtpTS || sc.wrapTracker.wraps != 0 {
+		t.Fatalf("wrapTracker=%+v want lastRTP=%d wraps=0", sc.wrapTracker, rtpTS)
+	}
+	if sc.degraded {
+		t.Fatal("expected degraded=false after anchor")
+	}
+	if sc.discontinuity {
+		t.Fatal("expected discontinuity=false after anchor")
+	}
+	if sc.lastSRReceivedAt.IsZero() {
+		t.Fatal("expected lastSRReceivedAt to be set")
+	}
+}
+
+func TestStreamClock_LockSetsLockedState(t *testing.T) {
+	sc := StreamClock{state: Anchored}
+
+	sc.Lock()
+
+	if sc.state != Locked {
+		t.Fatalf("state=%v want=%v", sc.state, Locked)
+	}
+}
+
+func TestStreamClock_UpdateClearsDiscontinuityOnStableSR(t *testing.T) {
+	sc := StreamClock{
+		clockRate:     90000,
+		degraded:      true,
+		discontinuity: true,
+	}
+	sc.Anchor(0, 1000.0)
+
+	rtpTS := uint32(90000)
+	ntpTS := 1001.0
+	sc.Update(rtpTS, ntpTS, 50*time.Millisecond)
+
+	if sc.baseRTP != uint64(rtpTS) {
+		t.Fatalf("baseRTP=%d want=%d", sc.baseRTP, rtpTS)
+	}
+	if sc.baseNTP != ntpTS {
+		t.Fatalf("baseNTP=%f want=%f", sc.baseNTP, ntpTS)
+	}
+	if sc.degraded {
+		t.Fatal("expected degraded=false after stable update")
+	}
+	if sc.discontinuity {
+		t.Fatal("expected discontinuity=false after stable update")
+	}
+}
+
+func TestStreamClock_UpdateMarksDiscontinuityOnLargeJump(t *testing.T) {
+	sc := StreamClock{clockRate: 90000}
+	sc.Anchor(0, 1000.0)
+
+	rtpTS := uint32(90000)
+	ntpTS := 1001.060
+	sc.Update(rtpTS, ntpTS, 50*time.Millisecond)
+
+	if sc.baseRTP != uint64(rtpTS) {
+		t.Fatalf("baseRTP=%d want=%d", sc.baseRTP, rtpTS)
+	}
+	if sc.baseNTP != ntpTS {
+		t.Fatalf("baseNTP=%f want=%f", sc.baseNTP, ntpTS)
+	}
+	if !sc.degraded {
+		t.Fatal("expected degraded=true after discontinuity")
+	}
+	if !sc.discontinuity {
+		t.Fatal("expected discontinuity=true after discontinuity")
+	}
+	if sc.lastNTPOutput != ntpTS {
+		t.Fatalf("lastNTPOutput=%f want=%f", sc.lastNTPOutput, ntpTS)
+	}
+}
+
+func TestStreamClock_NtpTimeUsesCurrentAnchor(t *testing.T) {
+	sc := StreamClock{clockRate: 90000}
+	sc.Anchor(1000, 500.0)
+
+	got := sc.NtpTime(1000 + 9000)
+	want := 500.0 + 0.1
+
+	if !almostEqual(got, want, 1e-9) {
+		t.Fatalf("NtpTime=%.9f want=%.9f", got, want)
+	}
+}
+
+func TestStreamClock_DetectDiscontinuityThreshold(t *testing.T) {
+	sc := StreamClock{clockRate: 90000}
+	sc.Anchor(0, 1000.0)
+
+	ext := uint64(90000)
+
+	if sc.detectDiscontinuity(ext, 1001.040, 50*time.Millisecond) {
+		t.Fatal("expected 40ms delta to stay below threshold")
+	}
+	if !sc.detectDiscontinuity(ext, 1001.060, 50*time.Millisecond) {
+		t.Fatal("expected 60ms delta to exceed threshold")
+	}
+}
+
+func TestStreamClock_ResetDiscontinuityClearsFlags(t *testing.T) {
+	sc := StreamClock{
+		degraded:      true,
+		discontinuity: true,
+	}
+
+	sc.resetDiscontinuity()
+
+	if sc.degraded {
+		t.Fatal("expected degraded=false after resetDiscontinuity")
+	}
+	if sc.discontinuity {
+		t.Fatal("expected discontinuity=false after resetDiscontinuity")
 	}
 }

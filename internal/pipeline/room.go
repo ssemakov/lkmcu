@@ -49,24 +49,25 @@ type ParticipantInfo struct {
 // Map key semantics:
 // - Tracks: keyed by trackKey (prefer Track SID). Decide() returns trackKey in its output.
 // - Participants: keyed by Participant SID (matches TrackInfo.ParticipantSID).
-// - CurrentSubs: current decisions, keyed by trackKey.
+// - SubCache: current subscripiton decisions, keyed by trackID.
 type RoomSnapshot struct {
 	Tracks       map[string]*TrackInfo       // Track SID -> info
 	Participants map[string]*ParticipantInfo // Participant SID (matches TrackInfo.ParticipantSID) -> info
-	CurrentSubs  map[string]DecisionAction   // Track SID -> current decision
-	Version      uint64
+	// SubCache stores the agentt's last observed subscripiton acton per track.
+	// It is not a source of truth for agent reconciliation, LiveKit's snapshot is.
+	// Future uses may include partial reconciliation, hysteresis, and video quality-layer decions.
+	SubCache map[string]DecisionAction
 }
 
 func NewRoomSnapshot() *RoomSnapshot {
 	return &RoomSnapshot{
 		Tracks:       make(map[string]*TrackInfo),
 		Participants: make(map[string]*ParticipantInfo),
-		CurrentSubs:  make(map[string]DecisionAction),
-		Version:      0,
+		SubCache:     make(map[string]DecisionAction),
 	}
 }
 
-// logging Format implementations
+// Format formats string for logger
 func (t *TrackInfo) Format() string {
 	if t == nil {
 		return "<nil>"
@@ -93,7 +94,14 @@ func (rs *RoomSnapshot) Format() string {
 	for pid, p := range rs.Participants {
 		participants = append(participants, fmt.Sprintf("%s:%s", pid, p.Format()))
 	}
-	return fmt.Sprintf("RoomSnapshot{Participants:{%s} CurrentSubs:%+v Version:%d}", strings.Join(participants, " "), rs.CurrentSubs, rs.Version)
+
+	var tracks []string
+	for tid, t := range rs.Tracks {
+		tracks = append(tracks, fmt.Sprintf("%s:%s", tid, t.Format()))
+	}
+
+	return fmt.Sprintf("RoomSnapshot{Participants:{%s} Tracks:{%s} SubCache:%+v}",
+		strings.Join(participants, " "), strings.Join(tracks, " "), rs.SubCache)
 }
 
 func (rs *RoomSnapshot) UpsertParticipant(pid string, identity string) *ParticipantInfo {
@@ -129,7 +137,7 @@ func (rs *RoomSnapshot) DeleteParticipantAndTracks(pid string) []string {
 func (rs *RoomSnapshot) UpsertTrack(pid string, tid string, kind TrackKind) (*TrackInfo, error) {
 	p, ok := rs.Participants[pid]
 	if !ok {
-		return nil, fmt.Errorf("UpsertTrack for unknown participant %s", pid)
+		return nil, fmt.Errorf("upsert track %s, kind %s: unknown participant %s", tid, kind, pid)
 	}
 
 	if t, ok := p.PublishedTracks[tid]; ok {
@@ -149,10 +157,36 @@ func (rs *RoomSnapshot) UpsertTrack(pid string, tid string, kind TrackKind) (*Tr
 func (rs *RoomSnapshot) DeleteTrack(pid string, tid string) error {
 	p, ok := rs.Participants[pid]
 	if !ok {
-		return fmt.Errorf("DeleteTrack for unknown participant %s", pid)
+		return fmt.Errorf("delete track %s: unknown participant %s", tid, pid)
 	}
 	delete(p.PublishedTracks, tid)
 	delete(rs.Tracks, tid)
 
 	return nil
+}
+
+// UpsertSubCache adds or updates the subscription decision for a track in the snapshot.
+func (rs *RoomSnapshot) UpsertSubCache(tid string, action DecisionAction) {
+	rs.SubCache[tid] = action
+}
+
+// RemoveSubCache removes the subscription decision for a track from the snapshot.
+func (rs *RoomSnapshot) RemoveSubCache(tid string) {
+	delete(rs.SubCache, tid)
+}
+
+// ParticipantTracks return all published track IDs for a participant.
+func (rs *RoomSnapshot) ParticipantTracks(pid string) ([]string, error) {
+	p, ok := rs.Participants[pid]
+	if !ok {
+		return nil, fmt.Errorf("participant tracks: unknown participant %s", pid)
+	}
+	tracks := p.PublishedTracks
+	subs := make([]string, 0, len(tracks))
+
+	for tid := range tracks {
+		subs = append(subs, tid)
+	}
+
+	return subs, nil
 }

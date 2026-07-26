@@ -1,8 +1,10 @@
-package testutil
+package jitter
 
 import (
 	"math"
 	"time"
+
+	"github.com/ssemakov/lkmcu/internal/media/clock"
 )
 
 const ntpEpochOffsetSeconds = 2208988800 // 1900-01-01 to 1970-01-01
@@ -25,7 +27,7 @@ func MakeSRBase(clockRate uint32, anchorAgo time.Duration) (baseRTP uint32, hi, 
 	baseUnix = time.Now().Add(-anchorAgo)
 	baseNTP = UnixToNTPSeconds(baseUnix)
 	baseRTP = 0
-	hi, lo = ToNTPParts(baseNTP)
+	hi, lo = clock.ToNTPParts(baseNTP)
 
 	return
 }
@@ -52,7 +54,7 @@ func MakeNextSR(baseRTP uint32, baseNTP float64, clockRate uint32, delta time.Du
 
 	nextRTP = baseRTP + uint32(math.Round(float64(clockRate)*delta.Seconds()))
 	nextNTP = baseNTP + delta.Seconds()
-	nextHi, nextLo = ToNTPParts(nextNTP)
+	nextHi, nextLo = clock.ToNTPParts(nextNTP)
 
 	return
 }

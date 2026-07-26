@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Define how the MCU reconstructs a stable wall-clock for incoming RTP streams using RTCP Sender Reports (SR) and how it bounds inter-stream drift to ≤ 40 ms per hour (≈ 11 ppm). This document covers clock-state management, drift detection, correction tactics, and observability. See [Jitter Buffer Design](./jitter_buffer.md) for buffering strategy built on top of this timing model.
+Define how the MCU reconstructs a stable wall-clock for incoming RTP streams using RTCP Sender Reports (SR) and how it bounds inter-stream drift to ≤ 40 ms per hour (≈ 11 ppm). This document covers clock-state management, drift detection, correction tactics, and observability. See [Jitter Buffer Design](./jitter.md) for buffering strategy built on top of this timing model.
 
 ## Objectives
 
 - Maintain accurate RTP→NTP mappings per SSRC using SR updates and safe extrapolation rules.
 - Detect and correct sender clock drift relative to the MCU master clock without audible/visible artifacts.
-- Surface configuration levers (timeouts, budgets) and telemetry for operations.
+- Define configuration levers (timeouts, budgets) and telemetry targets for operations.
 
 ## Clock Model
 
@@ -77,30 +77,38 @@ Time (in seconds) ────────────────────�
 
 - `base_rtp` (uint64), `base_ntp` (float64 seconds)
 - `clock_rate` (uint32)
-- `offset` (= `base_ntp`, internal convenience)
 - `wrap_tracker` (last_rtp, wraps) to extend 32‑bit RTP into 64‑bit space
 - `last_ntp_out` (float64): monotonic guard for converted timestamps
-- `last_sr_received_at` (time.Time): arrival time used for SR freshness
+- `last_sr_received_at` (time.Time): local arrival time used for SR freshness
+- `state`: explicit clock phase
+  - `Uninitialized`: no SR has anchored the stream yet
+  - `Anchored`: first SR installed; RTP→NTP mapping is usable for new packets
+  - `Locked`: a later consistent SR confirmed continuity
 - `degraded`, `discontinuity` flags for observability/guards
 
 ### Update Flow
 
 1. **SR Arrival**
    - Out‑of‑order guard: SRs with NTP older than the current anchor (within an `epsilon` tolerance) are ignored.
-   - Extend RTP to 64‑bit via wrap detection: if `rtp_new < rtp_prev` and `rtp_prev - rtp_new > 2^31`, increment wraps; then `extended = rtp_new + wraps·2^32`.
-   - Predict expected NTP at the SR’s RTP using the current linear model and compare to the SR’s NTP. If `|delta| > discontinuity_threshold`, treat as a sender clock discontinuity:
+   - State transition on accepted SR:
+     - `Uninitialized -> Anchored`: first SR establishes the initial RTP→NTP anchor and does not count as a discontinuity.
+     - `Anchored -> Locked`: second accepted SR confirms continuity and moves the stream into steady state.
+     - `Locked -> Locked`: later accepted SRs refresh the anchor in steady state.
+   - On accepted non-bootstrap SRs, extend RTP to 64‑bit via wrap detection and compare the SR NTP to the predicted NTP from the current model.
+   - If `|delta| > discontinuity_threshold`, treat the SR as a discontinuity:
      - Reset wrap baseline (`wraps=0`, `last_rtp=rtp_new`).
-     - Set `base_rtp = rtp_new` (raw), `base_ntp = sr.ntp`, `offset = base_ntp`.
+     - Set `base_rtp = rtp_new`, `base_ntp = sr.ntp`.
      - Reset `last_ntp_out = base_ntp`; set `degraded = true`, `discontinuity = true`.
-   - Otherwise (no discontinuity), update the anchor to the SR: `base_rtp = extended`, `base_ntp = sr.ntp`, `offset = base_ntp`.
-   - Record `last_sr_received_at = now`. On non‑discontinuity SRs, clear `degraded`/`discontinuity`.
+   - Otherwise, refresh `base_rtp`, `base_ntp`, and `last_sr_received_at`, and clear `degraded`/`discontinuity`.
 2. **Between SRs**
    - Convert incoming RTP timestamps using the linear model with the wrap tracker.
+   - `Uninitialized` streams reject conversion with a no-SR error.
+   - `Anchored` and `Locked` streams both allow mapping of new packets.
    - Enforce monotonic output per SSRC. If the computed NTP would move backwards relative to `last_ntp_out`:
      - If the backstep is small (`< backstep_clamp_threshold`), clamp forward to `last_ntp_out + clamp_smoothing`.
-     - Otherwise, mark `degraded = true` and clamp to `last_ntp_out + clamp_smoothing`.
+     - Otherwise, mark `degraded = true`, `discontinuity = true`, and clamp to `last_ntp_out + clamp_smoothing`.
 3. **Missing SRs**
-   - After `sr_timeout` without SRs, mark the mapping `degraded` and return an error on conversion while still providing a best‑effort projected NTP.
+   - After `sr_timeout` without a fresh accepted SR, mark the mapping `degraded` and return an error on conversion while still providing a best-effort projected NTP.
 
 ## Drift Detection & Correction
 
@@ -124,6 +132,7 @@ Where:
 - Target: |drift| ≤ 40 ms/hour (≈ 11 ppm).
 - Warning threshold: ±6 ppm sustained for > 30 s → schedule corrective action.
 - Critical threshold: ±11 ppm sustained → escalate (request keyframe, resubscribe, notify control plane).
+- The drift estimator and defaults are implemented in `internal/media/clock/drift.go`; integration with track rendering is future work.
 
 ### Correction Strategy
 
@@ -134,36 +143,44 @@ Where:
   - Nudge presentation timestamps toward master clock (≤ 2 ms per frame adjustment).
   - Drop or duplicate frames only when drift > 20 ms and resync not imminent; prefer keyframe request if divergence persists.
 - **Reset Conditions**
-  - If SR arrives with backwards NTP jump > 5 ms, treat as sender clock reset: flush jitter buffer, reset drift estimator.
+  - If an accepted SR creates a step larger than `DiscontinuityThreshold` (50 ms by default), treat it as a discontinuity in the mapper.
+  - Jitter-buffer flush/resync and drift-estimator reset are future integration work.
 
 ## Observability & Config
 
-- Metrics
+- Planned metrics
   - `media_clock_sr_age_seconds{ssrc}`
   - `media_clock_drift_ppm{ssrc}`
   - `media_clock_corrections_total{type}`
   - `media_clock_correction_duration_ms`
 - Logs
-  - Rate-limited warnings when drift crosses warning threshold for > 30 s.
-  - Info logs when SR timeout enters/exits degraded mode.
-- Config knobs (`internal/config`)
-  - `media.clock.sr_timeout`
-  - `media.clock.max_extrapolation_window`
-  - `media.clock.drift_budget_ms_per_hr`
-  - `media.clock.drift_warning_ppm`
+  - Debug logs for SR anchoring/locking, out-of-order SRs, discontinuities, SR timeout, and monotonic clamping.
+- Current mapper defaults (`clock.DefaultClockMapperConfig()`)
+  - `SRTimeout`: 5 s
+  - `DiscontinuityThreshold`: 50 ms
+  - `BackstepClampThreshold`: 10 ms
+  - `ClampSmoothing`: 2 ms
+  - `Epsilon`: 1 ns
+- Current drift defaults (`clock.DefaultDriftConfig()`)
+  - `WarnPPM`: 6
+  - `CritPPM`: 11
+  - `SustainWarn`: 30 s
+  - `SustainCrit`: 15 s
+
+These knobs are not yet surfaced through `internal/config`.
 
 ## Integration Points
 
-- `internal/media/clock/mapper.go`: implements API above.
-- `internal/media/clock/drift.go`: owns drift estimator, exposes adjustment hints to mixers/decoders.
-- `internal/media/buffer/jitter.go`: consumes mapper output for playout scheduling (see companion doc).
-- `internal/metrics`: registers metrics; ensure labels include SSRC and track IDs when safe.
-- `internal/pipeline`: inject mapper/drift controller into subscriber lifecycle and decoders.
+- `internal/media/clock/mapper.go`: implements the RTP→NTP mapping and SR state machine above.
+- `internal/media/clock/stream_clock.go`: owns the per-SSRC clock phase and anchor/discontinuity helpers.
+- `internal/media/clock/drift.go`: contains the drift estimator logic.
+- `internal/media/jitter/buffer.go`: consumes mapper output for packet admission and degraded-mode widening.
+- `internal/media/processor`: sets clock rate on pipeline start, reads RTCP sender reports, updates the mapper, and pushes RTP into the jitter buffer.
 
 ## Failure Modes & Mitigations
 
-- **SR Loss**: enter degraded mode, widen jitter buffer, raise alert via metrics; optionally request peer connection health check.
-- **Clock Jump**: detect via large negative/positive convert deltas; reset state and flush buffers to avoid corruption.
+- **SR Loss**: enter degraded mode and widen jitter buffer; alerting/control-plane response is future work.
+- **Clock Jump**: detect via accepted SR discontinuity or large conversion backstep; reset mapper state and avoid backwards NTP output.
 - **Mapper Overflow**: guard 64-bit NTP computations; clamp outputs within `time.Duration` limits.
 
 ## Future Work

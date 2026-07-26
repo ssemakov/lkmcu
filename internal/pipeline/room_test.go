@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 )
 
@@ -165,22 +166,79 @@ func TestRoomSnapshot_DeleteTrack_Nonexistent(t *testing.T) {
 	rs.DeleteTrack(pid, tid)
 }
 
+func TestRoomSnapshot_UpsertSubCache(t *testing.T) {
+	rs := NewRoomSnapshot()
+	rs.UpsertSubCache("t1", Paused)
+	if rs.SubCache["t1"] != Paused {
+		t.Errorf("expected true, got %v", rs.SubCache["t1"])
+	}
+}
+
+func TestRoomSnapshot_RemoveSubCache(t *testing.T) {
+	rs := NewRoomSnapshot()
+	rs.UpsertSubCache("t1", Audio)
+
+	rs.RemoveSubCache("t1")
+
+	if _, ok := rs.SubCache["t1"]; ok {
+		t.Fatal("expected subscription cache entry to be removed")
+	}
+}
+
+func TestRoomSnapshot_ParticipantTracks(t *testing.T) {
+	rs := NewRoomSnapshot()
+	rs.UpsertParticipant("p1", "alice")
+	_, err := rs.UpsertTrack("p1", "t1", TrackAudio)
+	if err != nil {
+		t.Fatalf("UpsertTrack() error = %v", err)
+	}
+	_, err = rs.UpsertTrack("p1", "t2", TrackVideo)
+	if err != nil {
+		t.Fatalf("UpsertTrack() error = %v", err)
+	}
+	rs.UpsertSubCache("t1", Paused)
+
+	got, err := rs.ParticipantTracks("p1")
+	if err != nil {
+		t.Fatalf("ParticipantTracks() error = %v", err)
+	}
+
+	slices.Sort(got)
+	want := []string{"t1", "t2"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("ParticipantTracks() = %v, want %v", got, want)
+	}
+}
+
+func TestRoomSnapshot_ParticipantTracks_MissingParticipant(t *testing.T) {
+	rs := NewRoomSnapshot()
+
+	got, err := rs.ParticipantTracks("missing")
+	if err == nil {
+		t.Fatal("expected error for missing participant")
+	}
+	if got != nil {
+		t.Fatalf("expected nil tracks for missing participant, got %v", got)
+	}
+}
+
 func TestRoomSnapshot_MultipleParticipantsAndTracks(t *testing.T) {
 	rs := NewRoomSnapshot()
 	// Add multiple participants and tracks
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		pid := fmt.Sprintf("p%d", i)
 		rs.UpsertParticipant(pid, fmt.Sprintf("user%d", i))
-		for j := 0; j < 2; j++ {
-			tid := fmt.Sprintf("t%d", j)
-			kind := TrackAudio
-			if j%2 == 1 {
-				kind = TrackVideo
-			}
-			_, err := rs.UpsertTrack(pid, tid, kind)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+
+		kind := TrackAudio
+		_, err := rs.UpsertTrack(pid, "t1", kind)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		kind = TrackVideo
+		_, err = rs.UpsertTrack(pid, "t2", kind)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	}
 	// Check counts

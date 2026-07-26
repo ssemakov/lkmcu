@@ -1,0 +1,145 @@
+package livekit
+
+import (
+	"errors"
+	"reflect"
+	"testing"
+	"time"
+
+	"github.com/pion/interceptor"
+	"github.com/pion/rtcp"
+	"github.com/ssemakov/lkmcu/internal/media/packet"
+)
+
+type fakeWebRtcRTPReceiver struct {
+	readRTCPPackets []rtcp.Packet
+	readRTCPAttrs   interceptor.Attributes
+	readRTCPErr     error
+	readRTCPCalled  int
+
+	setReadDeadlineArg    time.Time
+	setReadDeadlineCalled int
+	setReadDeadlineErr    error
+
+	stopCalled int
+	stopErr    error
+}
+
+func (f *fakeWebRtcRTPReceiver) ReadRTCP() ([]rtcp.Packet, interceptor.Attributes, error) {
+	f.readRTCPCalled++
+	return f.readRTCPPackets, f.readRTCPAttrs, f.readRTCPErr
+}
+
+func (f *fakeWebRtcRTPReceiver) SetReadDeadline(t time.Time) error {
+	f.setReadDeadlineCalled++
+	f.setReadDeadlineArg = t
+	return f.setReadDeadlineErr
+}
+
+func (f *fakeWebRtcRTPReceiver) Stop() error {
+	f.stopCalled++
+	return f.stopErr
+}
+
+func TestReceiverAdapter_ReadSenderReports_NilReceiver(t *testing.T) {
+	a := &receiverAdapter{receiver: nil}
+
+	got, err := a.ReadSenderReports()
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil sender reports, got %#v", got)
+	}
+}
+
+func TestReceiverAdapter_ReadSenderReports_Delegates(t *testing.T) {
+	want := []packet.SenderReport{
+		{RtpTs: 1111, NtpHigh: 0x01020304, NtpLow: 0x05060708},
+		{RtpTs: 2222, NtpHigh: 0xaabbccdd, NtpLow: 0xeeff0011},
+	}
+	fakePackets := []rtcp.Packet{
+		&rtcp.PictureLossIndication{MediaSSRC: 1234},
+		&rtcp.SenderReport{RTPTime: 1111, NTPTime: 0x0102030405060708},
+		&rtcp.TransportLayerNack{MediaSSRC: 4321},
+		&rtcp.SenderReport{RTPTime: 2222, NTPTime: 0xaabbccddeeff0011},
+	}
+	fake := &fakeWebRtcRTPReceiver{
+		readRTCPPackets: fakePackets,
+		readRTCPAttrs:   interceptor.Attributes{"x-test": "ignored"},
+	}
+	a := &receiverAdapter{receiver: fake}
+
+	got, err := a.ReadSenderReports()
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if fake.readRTCPCalled != 1 {
+		t.Fatalf("expected ReadRTCP to be called once, got %d", fake.readRTCPCalled)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("packets mismatch: want %#v, got %#v", want, got)
+	}
+}
+
+func TestReceiverAdapter_ReadSenderReports_PropagatesError(t *testing.T) {
+	wantErr := errors.New("read failed")
+	fake := &fakeWebRtcRTPReceiver{readRTCPErr: wantErr}
+	a := &receiverAdapter{receiver: fake}
+
+	got, err := a.ReadSenderReports()
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected error %v, got %v", wantErr, err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil sender reports on error, got %#v", got)
+	}
+}
+
+func TestReceiverAdapter_SetReadDeadline_NilReceiver(t *testing.T) {
+	a := &receiverAdapter{receiver: nil}
+
+	if err := a.SetReadDeadline(time.Now()); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+}
+
+func TestReceiverAdapter_SetReadDeadline_Delegates(t *testing.T) {
+	deadline := time.Date(2026, time.March, 5, 10, 11, 12, 13, time.UTC)
+	wantErr := errors.New("deadline failed")
+	fake := &fakeWebRtcRTPReceiver{setReadDeadlineErr: wantErr}
+	a := &receiverAdapter{receiver: fake}
+
+	err := a.SetReadDeadline(deadline)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected error %v, got %v", wantErr, err)
+	}
+	if fake.setReadDeadlineCalled != 1 {
+		t.Fatalf("expected SetReadDeadline to be called once, got %d", fake.setReadDeadlineCalled)
+	}
+	if !fake.setReadDeadlineArg.Equal(deadline) {
+		t.Fatalf("deadline mismatch: want %v, got %v", deadline, fake.setReadDeadlineArg)
+	}
+}
+
+func TestReceiverAdapter_Stop_NilReceiver(t *testing.T) {
+	a := &receiverAdapter{receiver: nil}
+
+	if err := a.Stop(); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+}
+
+func TestReceiverAdapter_Stop_Delegates(t *testing.T) {
+	wantErr := errors.New("stop failed")
+	fake := &fakeWebRtcRTPReceiver{stopErr: wantErr}
+	a := &receiverAdapter{receiver: fake}
+
+	err := a.Stop()
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected error %v, got %v", wantErr, err)
+	}
+	if fake.stopCalled != 1 {
+		t.Fatalf("expected Stop to be called once, got %d", fake.stopCalled)
+	}
+}

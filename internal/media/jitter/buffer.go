@@ -1,20 +1,20 @@
-// Package jitter_buffer implements a simple, adaptive RTP jitter buffer
+// Package jitter implements a simple, adaptive RTP jitter buffer
 // suitable for audio/video playout. It smooths inter‑arrival jitter by
 // admitting, ordering, and releasing packets against a playout cursor on
 // a stable clock produced by the clock mapper.
 //
-// Design notes and expected behavior are described in docs/jitter_buffer.md.
-package jitter_buffer
+// Design notes and expected behavior are described in docs/jitter.md.
+package jitter
 
 import (
 	"fmt"
-	"sort"
 	"sync"
 	"time"
 
 	"github.com/ssemakov/lkmcu/internal/logging"
-	"github.com/ssemakov/lkmcu/internal/media"
 	"github.com/ssemakov/lkmcu/internal/media/clock"
+	"github.com/ssemakov/lkmcu/internal/media/common"
+	"github.com/ssemakov/lkmcu/internal/media/packet"
 )
 
 type Status int
@@ -30,7 +30,7 @@ const (
 	StatusLateDrop
 	// StatusMapperDegraded indicates the packet was admitted but the
 	// RTP→NTP clock mapper reported a degraded state; the buffer widens
-	// to Config.MaxTarget for this SSRC while degraded. See docs/jitter_buffer.md.
+	// to Config.MaxTarget for this SSRC while degraded. See docs/jitter.md.
 	StatusMapperDegraded
 	// StatusMapperError indicates RTP→NTP conversion failed; the packet
 	// was not admitted and an error is returned.
@@ -56,7 +56,7 @@ func StatusString(status Status) string {
 
 // Buffer provides a concurrency‑safe jitter buffer interface keyed by SSRC.
 //
-// Contract (see docs/jitter_buffer.md):
+// Contract (see docs/jitter.md):
 //   - Push() admits packets, dropping late or duplicate packets.
 //   - Pop() releases the next packet when its presentation timestamp is
 //     ≤ the playout cursor (now - target).
@@ -69,8 +69,8 @@ func StatusString(status Status) string {
 // Concurrency: safe for concurrent Push/Pop across SSRCs, and safe for
 // concurrent Push/Pop on the same SSRC.
 type Buffer interface {
-	Push(ssrc uint32, packet Packet) (Status, error)
-	Pop(ssrc uint32, now time.Time) (Packet, bool)
+	Push(ssrc uint32, packet packet.Packet) (Status, error)
+	Pop(ssrc uint32, now time.Time) (packet.Packet, bool)
 	Occupancy(ssrc uint32) time.Duration
 	Target(ssrc uint32) time.Duration
 
@@ -78,7 +78,7 @@ type Buffer interface {
 }
 
 // Config controls jitter buffer behavior. All durations are in time.Duration.
-// Defaults follow the guidance in docs/jitter_buffer.md.
+// Defaults follow the guidance in docs/jitter.md.
 //
 // Notes:
 //   - LateDrop defines how far behind the playout cursor a packet may be
@@ -115,15 +115,15 @@ type dupeKey struct {
 // This type is exposed for tests and debugging; external users should use
 // the Buffer interface.
 type SSRCBuffer struct {
-	heap         *PacketHeap               // Min heap to Push/Pop packets in presentation order
-	occupy       time.Duration             // Current occupancy (newest.PTS - oldest.PTS)
-	lastPopPts   time.Time                 // Last popped packet presentation timestamp
-	lastPopAt    time.Time                 // When the last pop occurred
-	target       time.Duration             // Effective target buffer duration for this SSRC
-	freezeUntil  time.Time                 // Cursor freeze deadline used during rebuffering
-	freezeCursor time.Time                 // Cursor value while frozen
-	recent       media.RingBuffer[dupeKey] // Sliding window used for duplicate detection
-	noSR         bool                      // true if no Sender Report has been received yet for this SSRC
+	heap         *PacketHeap                // Min heap to Push/Pop packets in presentation order
+	occupy       time.Duration              // Current occupancy (newest.PTS - oldest.PTS)
+	lastPopPts   time.Time                  // Last popped packet presentation timestamp
+	lastPopAt    time.Time                  // When the last pop occurred
+	target       time.Duration              // Effective target buffer duration for this SSRC
+	freezeUntil  time.Time                  // Cursor freeze deadline used during rebuffering
+	freezeCursor time.Time                  // Cursor value while frozen
+	recent       common.RingBuffer[dupeKey] // Sliding window used for duplicate detection
+	noSR         bool                       // true if the clock is not yet anchored by an SR
 
 	mu sync.Mutex
 }
@@ -144,7 +144,7 @@ type jitterBuffer struct {
 }
 
 // DefaultConfig returns a Config populated with conservative defaults that
-// provide stable playout under typical jitter. See docs/jitter_buffer.md.
+// provide stable playout under typical jitter. See docs/jitter.md.
 func DefaultConfig() *Config {
 	return &Config{
 		LateDrop:        20 * time.Millisecond,
@@ -199,15 +199,17 @@ func NewBuffer(mapper *clock.ClockMapper, logger logging.Logger, cfg *Config, on
 //   - StatusLateDrop if the packet arrived later than cursor - LateDrop
 //   - StatusMapperDegraded if admitted while the mapper is degraded
 //   - StatusMapperError with a non‑nil error if RTP→NTP mapping failed
-func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
+func (jb *jitterBuffer) Push(ssrc uint32, packet packet.Packet) (Status, error) {
 	jb.mu.Lock()
 
 	sbuf, ok := jb.streams[ssrc]
 
 	// Initialize per-SSRC packet heap if not present
 	if !ok {
-		sb := SSRCBuffer{heap: &PacketHeap{}, mu: sync.Mutex{}, target: jb.cfg.Target,
-			recent: *media.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize), noSR: true}
+		sb := SSRCBuffer{
+			heap: &PacketHeap{}, mu: sync.Mutex{}, target: jb.cfg.Target,
+			recent: *common.NewRingBuffer[dupeKey](jb.cfg.DupeBufferSize), noSR: true,
+		}
 		jb.streams[ssrc] = &sb
 		sbuf = &sb
 	}
@@ -217,32 +219,32 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 	sbuf.mu.Lock()
 	defer sbuf.mu.Unlock()
 
-	now := time.Now()
-	pts := now.UnixNano() // default to now if no SR yet
-	srAvailable := jb.mapper.HasSenderReport(ssrc)
-	var packetNtp time.Time
+	mapperState := jb.mapper.State(ssrc)
+	clockReady := mapperState.Clock != clock.Uninitialized
+
 	status := StatusAccepted
-	mapperState := clock.MapperState{}
+
+	if sbuf.noSR && clockReady {
+		jb.logger.Infof("JitterBuffer: SSRC %08x received first SR; exiting no-SR mode", ssrc)
+
+		// Exit no-SR mode on first SR, allowing packets to be buffered and playout to start based on mapper clock
+		sbuf.noSR = false
+		sbuf.heap = &PacketHeap{}
+		sbuf.recent.Clear()
+		sbuf.occupy = 0
+		sbuf.target = jb.cfg.Target
+	}
+
+	now := time.Now()
+	pts := now.UnixNano()
 	var err error
 
-	// Recalculate PTS for all buffered packets immediately upon receiving the first SR
-	if sbuf.noSR && srAvailable {
-		jb.logger.Infof("JitterBuffer: SSRC %08x received first SR; exiting no-SR mode", ssrc)
-		// set noSR to false before recalculating PTS to enable proper mapper usage
-		sbuf.noSR = false
-		jb.recalculatePts(sbuf, ssrc)
-	} else if !sbuf.noSR && !srAvailable {
-		jb.logger.Infof("JitterBuffer: SSRC %08x lost SR; entering no-SR mode", ssrc)
-		sbuf.noSR = true
-	}
-
-	// Normal operation when SR is available, map RTP→NTP
-	// otherwise use now as PTS to allow buffering
-	if srAvailable {
-		packetNtp, mapperState, err = jb.mapper.RTPToNTPTime(ssrc, packet.RtpTs)
+	if clockReady {
+		packetNtp, state, rtpNtpErr := jb.mapper.RTPToNTPTime(ssrc, packet.RtpTs)
+		mapperState = state
+		err = rtpNtpErr
 		pts = packetNtp.UnixNano()
 	}
-
 	// Handle mapper Discontinuity and Degraded states below, otherwise return error
 	if !mapperState.Degraded && !mapperState.Discontinuity && err != nil {
 		return StatusMapperError, err
@@ -271,8 +273,12 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 		return StatusLateDrop, nil
 	}
 
-	packet.PayloadTs = unixPts
-	sbuf.heap.PushPacket(&packet)
+	tp := timedPacket{
+		Packet:    packet,
+		PayloadTS: unixPts,
+	}
+
+	sbuf.heap.PushPacket(&tp)
 	sbuf.updateOccupancy()
 
 	// Memory pressure check, drop overflowing the heap packets
@@ -280,8 +286,11 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 		jb.logger.Errorf(e.Error())
 	}
 
-	// drop oldest
-	sbuf.dropOldest()
+	// drop oldest packets if occupancy exceeds the current target
+	if dropped := sbuf.dropOldest(); dropped > 0 {
+		jb.logger.Debugf("JitterBuffer: occupancy trim dropped %d packet(s) for SSRC %08x (target=%v, occupancy=%v, len=%d)",
+			dropped, ssrc, sbuf.target, sbuf.occupy, sbuf.heap.Len())
+	}
 
 	return status, nil
 }
@@ -291,28 +300,28 @@ func (jb *jitterBuffer) Push(ssrc uint32, packet Packet) (Status, error) {
 // cursor (now - target). If the buffer is empty for longer than
 // Config.UndeflowGuard after the last pop, the cursor is temporarily
 // frozen by Config.RebufferBurst and onUnderflow is invoked.
-func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (Packet, bool) {
+func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (packet.Packet, bool) {
 	jb.mu.Lock()
 	sbuf, ok := jb.streams[ssrc]
 	jb.mu.Unlock()
 
 	if !ok {
-		return Packet{}, false
+		return packet.Packet{}, false
 	}
 
 	sbuf.mu.Lock()
 	defer sbuf.mu.Unlock()
 
 	if sbuf.noSR {
-		return Packet{}, false
+		return packet.Packet{}, false
 	}
 
-	p := sbuf.heap.PeekPacket()
+	tp := sbuf.heap.PeekPacket()
 
-	if p == nil && sbuf.lastPopPts.IsZero() {
+	if tp == nil && sbuf.lastPopPts.IsZero() {
 		// buffer is empty, and we have never popped any packet yet
-		return Packet{}, false
-	} else if p == nil {
+		return packet.Packet{}, false
+	} else if tp == nil {
 		// buffer is empty, check for underflow condition
 		deadline := sbuf.lastPopAt.Add(jb.cfg.UndeflowGuard)
 		if now.After(deadline) {
@@ -326,22 +335,22 @@ func (jb *jitterBuffer) Pop(ssrc uint32, now time.Time) (Packet, bool) {
 				jb.onUnderflow(ssrc)
 			}
 		}
-		return Packet{}, false
+		return packet.Packet{}, false
 	}
 
 	cursor := sbuf.cursor(now)
 	// check if packet is ready to be popped based on current time and target buffer size
-	ready := p.PayloadTs.Before(cursor) || p.PayloadTs.Equal(cursor)
+	ready := tp.PayloadTS.Before(cursor) || tp.PayloadTS.Equal(cursor)
 
 	if !ready {
-		return Packet{}, false
+		return packet.Packet{}, false
 	}
 
-	p = sbuf.heap.PopPacket()
-	sbuf.lastPopPts = p.PayloadTs
+	tp = sbuf.heap.PopPacket()
+	sbuf.lastPopPts = tp.PayloadTS
 	sbuf.lastPopAt = now
 	sbuf.updateOccupancy()
-	return *p, true
+	return tp.Packet, true
 }
 
 // Occupancy reports the current time span between the newest and oldest
@@ -382,66 +391,7 @@ func (jb *jitterBuffer) Config() *Config {
 	return jb.cfg
 }
 
-func (jb *jitterBuffer) recalculatePts(sbuf *SSRCBuffer, ssrc uint32) {
-	// Thread safety is granted by the caller (caller holds sbuf.mu)
-	packets := make([]*Packet, 0, sbuf.heap.Len())
-	for sbuf.heap.Len() > 0 {
-		packets = append(packets, sbuf.heap.PopPacket())
-	}
-
-	// Sort packets by RTP timestamp and sequence number to avoid out of order PTS
-	// (This is different from the normal payload order used in the heap by Less() that uses PTS first)
-	// and triggering mapper's monotonic guard
-	sort.Slice(packets, func(i, j int) bool {
-		if packets[i].RtpTs == packets[j].RtpTs {
-			return packets[i].Seq < packets[j].Seq
-		}
-		return packets[i].RtpTs < packets[j].RtpTs
-	})
-
-	nHeap := &PacketHeap{}
-
-	// Clear recent dupeKey buffer as PTS are changing
-	sbuf.recent.Clear()
-
-	for _, p := range packets {
-		packetNtp, _, err := jb.mapper.RTPToNTPTime(ssrc, p.RtpTs)
-		if err != nil {
-			jb.logger.Debugf("Recalculate Pts: failed to remap RTP ts %d for SSRC %08x: %v",
-				p.RtpTs, ssrc, err)
-			continue
-		}
-
-		if sbuf.dupKey(packetNtp.UnixNano(), *p) {
-			continue
-		}
-
-		unixPts := time.Unix(0, packetNtp.UnixNano())
-		now := time.Now()
-
-		if r, e := sbuf.dropLate(unixPts, now, jb.cfg); !r {
-			jb.logger.Debugf("Recalculate Pts: dropping late packet RTP ts %d for SSRC %08x: %v",
-				p.RtpTs, ssrc, e)
-			continue
-		}
-
-		p.PayloadTs = unixPts
-		nHeap.PushPacket(p)
-	}
-
-	sbuf.heap = nHeap
-	sbuf.updateOccupancy()
-
-	// Memory pressure check, drop overflowing the heap packets
-	if r, e := sbuf.memoryPressure(ssrc, jb.cfg); !r {
-		jb.logger.Errorf(e.Error())
-	}
-
-	// drop oldest
-	sbuf.dropOldest()
-}
-
-func (sbuf *SSRCBuffer) dupKey(pts int64, packet Packet) bool {
+func (sbuf *SSRCBuffer) dupKey(pts int64, packet packet.Packet) bool {
 	// Thread safety is granted by the caller (caller holds sb.mu)
 
 	dupKey := dupeKey{pts: pts, seq: packet.Seq}
@@ -474,7 +424,7 @@ func (sbuf *SSRCBuffer) memoryPressure(ssrc uint32, cfg *Config) (bool, error) {
 
 	if overflow > 0 {
 		before := sbuf.heap.Len()
-		for i := 0; i < overflow; i++ {
+		for range overflow {
 			sbuf.heap.PopPacket()
 		}
 		sbuf.updateOccupancy()
@@ -487,14 +437,18 @@ func (sbuf *SSRCBuffer) memoryPressure(ssrc uint32, cfg *Config) (bool, error) {
 }
 
 // drop oldest packets until occupancy ≤ target_ms
-func (sbuf *SSRCBuffer) dropOldest() {
+func (sbuf *SSRCBuffer) dropOldest() int {
+	dropped := 0
 	for sbuf.heap.Len() > 0 {
 		sbuf.updateOccupancy()
 		if sbuf.occupy <= sbuf.target {
-			return
+			return dropped
 		}
 		sbuf.heap.PopPacket()
+		dropped++
 	}
+
+	return dropped
 }
 
 func (sbuf *SSRCBuffer) updateOccupancy() {
@@ -502,7 +456,7 @@ func (sbuf *SSRCBuffer) updateOccupancy() {
 	newest := sbuf.heap.PeekMaxPacket()
 
 	if oldest != nil && newest != nil {
-		sbuf.occupy = newest.PayloadTs.Sub(oldest.PayloadTs)
+		sbuf.occupy = newest.PayloadTS.Sub(oldest.PayloadTS)
 	} else {
 		sbuf.occupy = 0
 	}

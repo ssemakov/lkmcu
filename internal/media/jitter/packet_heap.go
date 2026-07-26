@@ -1,10 +1,10 @@
-package jitter_buffer
+package jitter
 
 import "container/heap"
 
 type PacketHeap struct {
-	packets   []*Packet
-	maxPacket *Packet
+	packets   []*timedPacket
+	maxPacket *timedPacket
 }
 
 func (ph PacketHeap) Len() int { return len(ph.packets) }
@@ -18,7 +18,7 @@ func (ph PacketHeap) Swap(i, j int) {
 }
 
 func (ph *PacketHeap) Push(x interface{}) {
-	ph.packets = append(ph.packets, x.(*Packet))
+	ph.packets = append(ph.packets, x.(*timedPacket))
 }
 
 func (ph *PacketHeap) Pop() interface{} {
@@ -30,16 +30,16 @@ func (ph *PacketHeap) Pop() interface{} {
 	return x
 }
 
-func (ph *PacketHeap) PushPacket(p *Packet) {
-	heap.Push(ph, p)
+func (ph *PacketHeap) PushPacket(tp *timedPacket) {
+	heap.Push(ph, tp)
 
-	if ph.maxPacket == nil || ph.maxPacket.Less(p) {
-		ph.maxPacket = p
+	if ph.maxPacket == nil || ph.maxPacket.Less(tp) {
+		ph.maxPacket = tp
 	}
 
 }
 
-func (ph *PacketHeap) PopPacket() *Packet {
+func (ph *PacketHeap) PopPacket() *timedPacket {
 	if ph.Len() == 0 {
 		return nil
 	}
@@ -51,16 +51,16 @@ func (ph *PacketHeap) PopPacket() *Packet {
 		ph.maxPacket = nil
 	}
 
-	return heap.Pop(ph).(*Packet)
+	return heap.Pop(ph).(*timedPacket)
 }
 
-func (ph *PacketHeap) PeekPacket() *Packet {
+func (ph *PacketHeap) PeekPacket() *timedPacket {
 	if ph == nil || ph.Len() == 0 {
 		return nil
 	}
 	return ph.packets[0]
 }
 
-func (ph *PacketHeap) PeekMaxPacket() *Packet {
+func (ph *PacketHeap) PeekMaxPacket() *timedPacket {
 	return ph.maxPacket
 }

@@ -1,0 +1,476 @@
+package processor
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/ssemakov/lkmcu/internal/livekit"
+	"github.com/ssemakov/lkmcu/internal/media/packet"
+)
+
+type TestTrack int
+
+const (
+	// Timeout variants.
+	TimeoutRTPTrack TestTrack = iota
+
+	// Terminal read-error variants.
+	EOFRTPTrack
+	ClosedPipeRTPTrack
+	CanceledRTPTrack
+	UnexpectedErrRTPTrack
+)
+
+type TestReceiver int
+
+const (
+	// Terminal read-error variants.
+	EOFReceiver TestReceiver = iota
+	TimeoutReceiver
+	ClosedPipeReceiver
+	CanceledReceiver
+	UnexpectedErrReceiver
+)
+
+type ReadCallCounter interface {
+	ReadCalls() int32
+}
+
+type CounterTrack interface {
+	livekit.RemoteTrack
+	ReadCallCounter
+}
+
+type CounterReceiver interface {
+	livekit.Receiver
+	ReadCallCounter
+}
+
+// Track: timeout variant.
+type timeoutRTPTrack struct {
+	id         string
+	readCalled int32
+}
+
+func (t *timeoutRTPTrack) ID() string                      { return t.id }
+func (t *timeoutRTPTrack) Kind() string                    { return "audio" }
+func (t *timeoutRTPTrack) SSRC() uint32                    { return 1234 }
+func (t *timeoutRTPTrack) ClockRate() uint32               { return 48000 }
+func (t *timeoutRTPTrack) MimeType() string                { return "audio/opus" }
+func (t *timeoutRTPTrack) SetReadDeadline(time.Time) error { return nil }
+func (t *timeoutRTPTrack) ReadRTP() (packet.Packet, error) {
+	atomic.AddInt32(&t.readCalled, 1)
+	return packet.Packet{}, timeoutNetError{}
+}
+
+func (t *timeoutRTPTrack) ReadCalls() int32 {
+	return atomic.LoadInt32(&t.readCalled)
+}
+
+// Track: terminal read-error variant.
+type errorRTPTrack struct {
+	id         string
+	readErr    error
+	readCalled int32
+}
+
+func (t *errorRTPTrack) ID() string                      { return t.id }
+func (t *errorRTPTrack) Kind() string                    { return "audio" }
+func (t *errorRTPTrack) SSRC() uint32                    { return 1234 }
+func (t *errorRTPTrack) ClockRate() uint32               { return 48000 }
+func (t *errorRTPTrack) MimeType() string                { return "audio/opus" }
+func (t *errorRTPTrack) SetReadDeadline(time.Time) error { return nil }
+func (t *errorRTPTrack) ReadRTP() (packet.Packet, error) {
+	atomic.AddInt32(&t.readCalled, 1)
+	return packet.Packet{}, t.readErr
+}
+
+func (t *errorRTPTrack) ReadCalls() int32 {
+	return atomic.LoadInt32(&t.readCalled)
+}
+
+// Track: stop-path variant (blocking read until explicit release).
+type StopTrack struct {
+	id                    string
+	readStarted           chan struct{}
+	readReturned          chan struct{}
+	releaseCh             chan struct{}
+	releaseOnce           sync.Once
+	readStartedOnce       sync.Once
+	readReturnedOnce      sync.Once
+	stopDeadlineCalls     int32
+	unblockOnStopDeadline bool
+	readCalled            int32
+}
+
+func newStopTrack(id string, unblockOnStopDeadline bool) *StopTrack {
+	return &StopTrack{
+		id:                    id,
+		readStarted:           make(chan struct{}),
+		readReturned:          make(chan struct{}),
+		releaseCh:             make(chan struct{}),
+		unblockOnStopDeadline: unblockOnStopDeadline,
+	}
+}
+
+func (t *StopTrack) ID() string        { return t.id }
+func (t *StopTrack) Kind() string      { return "audio" }
+func (t *StopTrack) SSRC() uint32      { return 1234 }
+func (t *StopTrack) ClockRate() uint32 { return 48000 }
+func (t *StopTrack) MimeType() string  { return "audio/opus" }
+
+func (t *StopTrack) SetReadDeadline(deadline time.Time) error {
+	if isStopDeadline(deadline) {
+		atomic.AddInt32(&t.stopDeadlineCalls, 1)
+		if t.unblockOnStopDeadline {
+			t.Release()
+		}
+	}
+
+	return nil
+}
+
+func (t *StopTrack) ReadRTP() (packet.Packet, error) {
+	atomic.AddInt32(&t.readCalled, 1)
+	t.readStartedOnce.Do(func() { close(t.readStarted) })
+	<-t.releaseCh
+	t.readReturnedOnce.Do(func() { close(t.readReturned) })
+	return packet.Packet{}, context.Canceled
+}
+
+func (t *StopTrack) ReadCalls() int32 {
+	return atomic.LoadInt32(&t.readCalled)
+}
+
+func (t *StopTrack) StopDeadlineCalls() int32 {
+	return atomic.LoadInt32(&t.stopDeadlineCalls)
+}
+
+func (t *StopTrack) ReadStarted() <-chan struct{} {
+	return t.readStarted
+}
+
+func (t *StopTrack) ReadReturned() <-chan struct{} {
+	return t.readReturned
+}
+
+func (t *StopTrack) Release() {
+	t.releaseOnce.Do(func() { close(t.releaseCh) })
+}
+
+// Receiver: terminal io.EOF variant.
+type eofReceiver struct {
+	readCalled int32
+}
+
+func (r *eofReceiver) ReadSenderReports() ([]packet.SenderReport, error) {
+	atomic.AddInt32(&r.readCalled, 1)
+	return nil, io.EOF
+}
+
+func (r *eofReceiver) SetReadDeadline(time.Time) error { return nil }
+func (r *eofReceiver) Stop() error                     { return nil }
+func (r *eofReceiver) ReadCalls() int32 {
+	return atomic.LoadInt32(&r.readCalled)
+}
+
+// Receiver: timeout variant.
+type timeoutReceiver struct {
+	readCalled int32
+}
+
+func (r *timeoutReceiver) ReadSenderReports() ([]packet.SenderReport, error) {
+	atomic.AddInt32(&r.readCalled, 1)
+	return nil, timeoutNetError{}
+}
+
+func (r *timeoutReceiver) SetReadDeadline(time.Time) error { return nil }
+func (r *timeoutReceiver) Stop() error                     { return nil }
+func (r *timeoutReceiver) ReadCalls() int32 {
+	return atomic.LoadInt32(&r.readCalled)
+}
+
+// Receiver: terminal read-error variant.
+type errorReceiver struct {
+	readErr    error
+	readCalled int32
+}
+
+func (r *errorReceiver) ReadSenderReports() ([]packet.SenderReport, error) {
+	atomic.AddInt32(&r.readCalled, 1)
+	return nil, r.readErr
+}
+
+func (r *errorReceiver) SetReadDeadline(time.Time) error { return nil }
+func (r *errorReceiver) Stop() error                     { return nil }
+func (r *errorReceiver) ReadCalls() int32 {
+	return atomic.LoadInt32(&r.readCalled)
+}
+
+// Receiver: stop-path variant (blocking read until explicit release).
+type StopReceiver struct {
+	readStarted           chan struct{}
+	readReturned          chan struct{}
+	stopCalled            chan struct{}
+	releaseCh             chan struct{}
+	releaseOnce           sync.Once
+	stopCalledOnce        sync.Once
+	readStartedOnce       sync.Once
+	readReturnedOnce      sync.Once
+	stopCalls             int32
+	stopDeadlineCalls     int32
+	unblockOnStopDeadline bool
+	readCalled            int32
+}
+
+func newStopReceiver(unblockOnStopDeadline bool) *StopReceiver {
+	return &StopReceiver{
+		readStarted:           make(chan struct{}),
+		readReturned:          make(chan struct{}),
+		stopCalled:            make(chan struct{}),
+		releaseCh:             make(chan struct{}),
+		unblockOnStopDeadline: unblockOnStopDeadline,
+	}
+}
+
+func (r *StopReceiver) ReadSenderReports() ([]packet.SenderReport, error) {
+	atomic.AddInt32(&r.readCalled, 1)
+	r.readStartedOnce.Do(func() { close(r.readStarted) })
+	<-r.releaseCh
+	r.readReturnedOnce.Do(func() { close(r.readReturned) })
+	return nil, context.Canceled
+}
+
+func (r *StopReceiver) SetReadDeadline(deadline time.Time) error {
+	if isStopDeadline(deadline) {
+		atomic.AddInt32(&r.stopDeadlineCalls, 1)
+		if r.unblockOnStopDeadline {
+			r.Release()
+		}
+	}
+
+	return nil
+}
+
+func (r *StopReceiver) Stop() error {
+	atomic.AddInt32(&r.stopCalls, 1)
+	r.stopCalledOnce.Do(func() { close(r.stopCalled) })
+	return nil
+}
+
+func (r *StopReceiver) ReadCalls() int32 {
+	return atomic.LoadInt32(&r.readCalled)
+}
+
+func (r *StopReceiver) StopCalls() int32 {
+	return atomic.LoadInt32(&r.stopCalls)
+}
+
+func (r *StopReceiver) StopDeadlineCalls() int32 {
+	return atomic.LoadInt32(&r.stopDeadlineCalls)
+}
+
+func (r *StopReceiver) ReadStarted() <-chan struct{} {
+	return r.readStarted
+}
+
+func (r *StopReceiver) ReadReturned() <-chan struct{} {
+	return r.readReturned
+}
+
+func (r *StopReceiver) StopCalled() <-chan struct{} {
+	return r.stopCalled
+}
+
+func (r *StopReceiver) Release() {
+	r.releaseOnce.Do(func() { close(r.releaseCh) })
+}
+
+type timeoutNetError struct{}
+
+func (timeoutNetError) Error() string   { return "timeout" }
+func (timeoutNetError) Timeout() bool   { return true }
+func (timeoutNetError) Temporary() bool { return true }
+
+var errUnexpectedRead = errors.New("unexpected read failure")
+
+func isStopDeadline(deadline time.Time) bool {
+	return deadline.Before(time.Now().Add(time.Second))
+}
+
+func MakeRTPTrackAndReceiver(
+	trackType TestTrack,
+	receiverType TestReceiver,
+) (CounterTrack, CounterReceiver, error) {
+	var (
+		track CounterTrack
+	)
+
+	switch trackType {
+	case TimeoutRTPTrack:
+		t := &timeoutRTPTrack{id: "t1"}
+		track = t
+	case EOFRTPTrack:
+		t := &errorRTPTrack{id: "t1", readErr: io.EOF}
+		track = t
+	case ClosedPipeRTPTrack:
+		t := &errorRTPTrack{id: "t1", readErr: io.ErrClosedPipe}
+		track = t
+	case CanceledRTPTrack:
+		t := &errorRTPTrack{id: "t1", readErr: context.Canceled}
+		track = t
+	case UnexpectedErrRTPTrack:
+		t := &errorRTPTrack{id: "t1", readErr: errUnexpectedRead}
+		track = t
+	default:
+		return nil, nil, fmt.Errorf("unsupported track type: %d", trackType)
+	}
+
+	var (
+		receiver CounterReceiver
+	)
+
+	switch receiverType {
+	case EOFReceiver:
+		r := &eofReceiver{}
+		receiver = r
+	case TimeoutReceiver:
+		r := &timeoutReceiver{}
+		receiver = r
+	case ClosedPipeReceiver:
+		r := &errorReceiver{readErr: io.ErrClosedPipe}
+		receiver = r
+	case CanceledReceiver:
+		r := &errorReceiver{readErr: context.Canceled}
+		receiver = r
+	case UnexpectedErrReceiver:
+		r := &errorReceiver{readErr: errUnexpectedRead}
+		receiver = r
+	default:
+		return nil, nil, fmt.Errorf("unsupported receiver type: %d", receiverType)
+	}
+
+	return track, receiver, nil
+}
+
+func MakeStopTrackAndReceiver(
+	unblockOnStopDeadline bool,
+) (*StopTrack, *StopReceiver) {
+	track := newStopTrack("t1", unblockOnStopDeadline)
+	receiver := newStopReceiver(unblockOnStopDeadline)
+
+	return track, receiver
+}
+
+// Track: handleRTP-path variant with controllable deadline/read errors.
+type HandleRTPTrack struct {
+	id               string
+	pkt              packet.Packet
+	setDeadlineErr   error
+	readErr          error
+	setDeadlineCalls int32
+	readCalls        int32
+}
+
+func NewHandleRTPTrack(
+	id string,
+	pkt packet.Packet,
+	setDeadlineErr error,
+	readErr error,
+) *HandleRTPTrack {
+	return &HandleRTPTrack{
+		id:             id,
+		pkt:            pkt,
+		setDeadlineErr: setDeadlineErr,
+		readErr:        readErr,
+	}
+}
+
+func (t *HandleRTPTrack) ID() string        { return t.id }
+func (t *HandleRTPTrack) Kind() string      { return "audio" }
+func (t *HandleRTPTrack) SSRC() uint32      { return 1234 }
+func (t *HandleRTPTrack) ClockRate() uint32 { return 48000 }
+func (t *HandleRTPTrack) MimeType() string  { return "audio/opus" }
+
+func (t *HandleRTPTrack) SetReadDeadline(time.Time) error {
+	atomic.AddInt32(&t.setDeadlineCalls, 1)
+	return t.setDeadlineErr
+}
+
+func (t *HandleRTPTrack) ReadRTP() (packet.Packet, error) {
+	atomic.AddInt32(&t.readCalls, 1)
+	return t.pkt, t.readErr
+}
+
+func (t *HandleRTPTrack) SetDeadlineCalls() int32 {
+	return atomic.LoadInt32(&t.setDeadlineCalls)
+}
+
+func (t *HandleRTPTrack) ReadCalls() int32 {
+	return atomic.LoadInt32(&t.readCalls)
+}
+
+// Receiver: handleRTCP-path variant with controllable deadline/read errors.
+type ControllableRTPReceiver struct {
+	reports          []packet.SenderReport
+	setDeadlineErr   error
+	readErr          error
+	setDeadlineCalls int32
+	readCalls        int32
+}
+
+func NewControllableRTPReceiver(
+	reports []packet.SenderReport,
+	setDeadlineErr error,
+	readErr error,
+) *ControllableRTPReceiver {
+	return &ControllableRTPReceiver{
+		reports:        reports,
+		setDeadlineErr: setDeadlineErr,
+		readErr:        readErr,
+	}
+}
+
+func (r *ControllableRTPReceiver) SetReadDeadline(time.Time) error {
+	atomic.AddInt32(&r.setDeadlineCalls, 1)
+	return r.setDeadlineErr
+}
+
+func (r *ControllableRTPReceiver) ReadSenderReports() ([]packet.SenderReport, error) {
+	atomic.AddInt32(&r.readCalls, 1)
+	return r.reports, r.readErr
+}
+
+func (r *ControllableRTPReceiver) Stop() error { return nil }
+
+func (r *ControllableRTPReceiver) SetDeadlineCalls() int32 {
+	return atomic.LoadInt32(&r.setDeadlineCalls)
+}
+
+func (r *ControllableRTPReceiver) ReadCalls() int32 {
+	return atomic.LoadInt32(&r.readCalls)
+}
+
+// StopErrorReceiver returns an error on Stop() to simulate a failure in the receiver's Stop method
+type StopErrorReceiver struct {
+	StopReceiver *StopReceiver
+	Err          error
+}
+
+func (r *StopErrorReceiver) Stop() error {
+	r.StopReceiver.Stop() // preserve all StopReceiver behavior (including call counting and blocking until release)
+	return r.Err
+}
+
+func (r *StopErrorReceiver) ReadSenderReports() ([]packet.SenderReport, error) {
+	return r.StopReceiver.ReadSenderReports()
+}
+
+func (r *StopErrorReceiver) SetReadDeadline(t time.Time) error {
+	return r.StopReceiver.SetReadDeadline(t)
+}

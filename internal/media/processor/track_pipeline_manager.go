@@ -1,0 +1,131 @@
+package processor
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"time"
+
+	"github.com/ssemakov/lkmcu/internal/livekit"
+	"github.com/ssemakov/lkmcu/internal/logging"
+	"github.com/ssemakov/lkmcu/internal/media"
+	"github.com/ssemakov/lkmcu/internal/media/clock"
+	"github.com/ssemakov/lkmcu/internal/media/jitter"
+	"github.com/ssemakov/lkmcu/internal/metrics"
+)
+
+// TrackPipelineManager manages the lifecycle of track pipelines for subscribed tracks.
+type TrackPipelineManager interface {
+	// NewTrackPipeline creates a new track pipeline for the given remote track and starts processing it.
+	NewTrackPipeline(trackID string, track livekit.RemoteTrack, receiver livekit.Receiver) (TrackPipeline, error)
+	// RemoveTrackPipeline stops and removes the track pipeline associated with the given track ID.
+	RemoveTrackPipeline(trackID string) error
+}
+
+type trackPipelineManager struct {
+	factory   TrackPipelineFactory
+	pipelines map[string]TrackPipeline
+	buffer    *jitter.Buffer
+	mapper    *clock.ClockMapper
+
+	logger logging.Logger
+	ctx    context.Context
+	mu     sync.Mutex
+}
+
+var ErrPipeNotFound = errors.New("track pipeline not found")
+
+// NewTrackPipelineManager creates a new instance of trackPipelineManager with the provided factory.
+// factory - A TrackPipelineFactory used to create new track pipelines.
+func NewTrackPipelineManager(l logging.Logger, ctx context.Context) TrackPipelineManager {
+	clockMapper := clock.NewClockMapper(metrics.NewMetrics(), l, clock.DefaultClockMapperConfig())
+	// ToDo: pass onOverflowHandler
+	buffer := jitter.NewBuffer(clockMapper, l, jitter.DefaultConfig(), nil)
+
+	tpm := NewTrackPipelineManagerWithFactory(&DefaultTrackPipelineFactory{
+		Logger:       l,
+		Ctx:          ctx,
+		Config:       DefaultTrackPipelineConfig(),
+		Mapper:       clockMapper,
+		Buffer:       buffer,
+		CodecFactory: &media.DefaultCodecFactory{},
+	}, clockMapper, buffer, l, ctx).(*trackPipelineManager)
+
+	// start once and let it idle when no ingress
+	// TODO: for now all pipelines are audio, we'll introduce video later and can split the loop then
+	go tpm.audioLoop()
+
+	return tpm
+}
+
+func NewTrackPipelineManagerWithFactory(factory TrackPipelineFactory, clockMapper *clock.ClockMapper,
+	buffer jitter.Buffer, l logging.Logger, ctx context.Context,
+) TrackPipelineManager {
+	return &trackPipelineManager{
+		factory:   factory,
+		pipelines: make(map[string]TrackPipeline),
+		buffer:    &buffer,
+		mapper:    clockMapper,
+		logger:    l,
+		ctx:       ctx,
+	}
+}
+
+func (m *trackPipelineManager) NewTrackPipeline(trackID string, track livekit.RemoteTrack, receiver livekit.Receiver) (TrackPipeline, error) {
+	pipeline, err := m.factory.NewTrackPipeline(track, receiver)
+	if err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.pipelines[trackID] = pipeline
+	m.pipelines[trackID].Start()
+	return pipeline, nil
+}
+
+func (m *trackPipelineManager) RemoveTrackPipeline(trackID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pipeline, ok := m.pipelines[trackID]
+	if !ok {
+		return ErrPipeNotFound
+	}
+
+	pipeline.Stop()
+
+	delete(m.pipelines, trackID)
+	return nil
+}
+
+func (m *trackPipelineManager) audioLoop() {
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-tick.C:
+			now := time.Now() // this represent the master clock time for all pipelines
+			activeAudioPipelines := m.snapshotPipelines()
+
+			for _, pipeline := range activeAudioPipelines {
+				pipeline.Render(now)
+			}
+		}
+	}
+}
+
+func (m *trackPipelineManager) snapshotPipelines() []TrackPipeline {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pipelines := make([]TrackPipeline, 0, len(m.pipelines))
+	for _, pipeline := range m.pipelines {
+		pipelines = append(pipelines, pipeline)
+	}
+	return pipelines
+}

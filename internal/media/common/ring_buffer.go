@@ -1,4 +1,4 @@
-package media
+package common
 
 type RingBuffer[T comparable] struct {
 	data []T

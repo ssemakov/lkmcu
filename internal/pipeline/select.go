@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"slices"
+
 	"github.com/ssemakov/lkmcu/internal/layout"
 	"github.com/ssemakov/lkmcu/internal/livekit"
 )
@@ -16,27 +18,31 @@ const (
 
 type Decision struct {
 	TrackID string
+	PID     string
 	Action  DecisionAction
 	Reason  string
 }
 
 type Operations interface {
 	isOperation()
-	exec(lk *livekit.Client) error
+	Exec(lk livekit.Client) error
 }
 
 type SubscribeOp struct {
 	TrackID string
+	PID     string
 	Action  DecisionAction
 	Reason  string
 }
 type UnsubscribeOp struct {
 	TrackID string
+	PID     string
 	Reason  string
 }
 
 type UpdateOp struct {
 	TrackID string
+	PID     string
 	Action  DecisionAction
 	Reason  string
 }
@@ -46,28 +52,26 @@ func (o *UnsubscribeOp) isOperation() {}
 func (o *UpdateOp) isOperation()      {}
 
 func (o *SubscribeOp) String() string {
-	return "SubscribeOp{ TrackID: " + o.TrackID + ", Action: " + string(o.Action) + ", Reason: " + o.Reason + " }"
+	return "SubscribeOp{ TrackID: " + o.TrackID + ", PID: " + o.PID + ", Action: " + string(o.Action) + ", Reason: " + o.Reason + " }"
 }
 
 func (o *UnsubscribeOp) String() string {
-	return "UnsubscribeOp{ TrackID: " + o.TrackID + ", Reason: " + o.Reason + " }"
+	return "UnsubscribeOp{ TrackID: " + o.TrackID + ", PID: " + o.PID + ", Reason: " + o.Reason + " }"
 }
 
 func (o *UpdateOp) String() string {
-	return "UpdateOp{ TrackID: " + o.TrackID + ", Action: " + string(o.Action) + ", Reason: " + o.Reason + " }"
+	return "UpdateOp{ TrackID: " + o.TrackID + ", PID: " + o.PID + ", Action: " + string(o.Action) + ", Reason: " + o.Reason + " }"
 }
 
-func (o *SubscribeOp) exec(lk *livekit.Client) error {
-	// return lk.Subscribe(o.TrackID, o.Action)
-	return nil
+func (o *SubscribeOp) Exec(lk livekit.Client) error {
+	return lk.Subscribe(o.PID, o.TrackID, true)
 }
 
-func (o *UnsubscribeOp) exec(lk *livekit.Client) error {
-	// return lk.Unsubscribe(o.TrackID)
-	return nil
+func (o *UnsubscribeOp) Exec(lk livekit.Client) error {
+	return lk.Subscribe(o.PID, o.TrackID, false)
 }
 
-func (o *UpdateOp) exec(lk *livekit.Client) error {
+func (o *UpdateOp) Exec(lk livekit.Client) error {
 	// return lk.UpdateSubscription(o.TrackID, o.Action)
 	return nil
 }
@@ -94,7 +98,7 @@ func (o *UpdateOp) exec(lk *livekit.Client) error {
 //   - A slice of Decision values, one per considered track, where Decision.TrackID equals
 //     the map key (trackKey) used in snapshot.Tracks.
 func Decide(policy Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []Decision {
-	desc := []Decision{}
+	decs := []Decision{}
 
 	for tid, tInfo := range snapshot.Tracks {
 		// track presence
@@ -103,7 +107,8 @@ func Decide(policy Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []
 		}
 
 		// participant presence by SID (ParticipantSID)
-		pInfo, ok := snapshot.Participants[tInfo.ParticipantSID]
+		pid := tInfo.ParticipantSID
+		pInfo, ok := snapshot.Participants[pid]
 		if !ok || pInfo == nil {
 			continue
 		}
@@ -113,7 +118,7 @@ func Decide(policy Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []
 		excluded := policy.IsExcluded(tInfo.Kind)
 
 		if !included || excluded {
-			desc = append(desc, Decision{TrackID: tid, Action: Paused, Reason: "excluded by policy"})
+			decs = append(decs, Decision{TrackID: tid, PID: pid, Action: Paused, Reason: "excluded by policy"})
 			continue
 		}
 
@@ -124,30 +129,25 @@ func Decide(policy Policy, layout *layout.LayoutView, snapshot *RoomSnapshot) []
 			onStage = true
 			// or check if the participant is on stage with the given track kind
 		} else if kinds, ok := layout.StageParticipants[pInfo.Identity]; ok {
-			for _, tk := range kinds {
-				if tk == tInfo.Kind.String() {
-					onStage = true
-					break
-				}
-			}
+			onStage = slices.Contains(kinds, tInfo.Kind.String())
 		}
 
 		if !onStage {
-			desc = append(desc, Decision{TrackID: tid, Action: Paused, Reason: "not on stage"})
+			decs = append(decs, Decision{TrackID: tid, PID: pid, Action: Paused, Reason: "not on stage"})
 			continue
 		}
 
 		switch tInfo.Kind {
 		case TrackVideo, TrackScreenShare:
-			desc = append(desc, Decision{TrackID: tid, Action: VideoFull, Reason: "video on stage"})
+			decs = append(decs, Decision{TrackID: tid, PID: pid, Action: VideoFull, Reason: "video on stage"})
 		case TrackAudio:
-			desc = append(desc, Decision{TrackID: tid, Action: Audio, Reason: "audio on stage"})
+			decs = append(decs, Decision{TrackID: tid, PID: pid, Action: Audio, Reason: "audio on stage"})
 		default:
-			desc = append(desc, Decision{TrackID: tid, Action: Paused, Reason: "unknown track kind"})
+			decs = append(decs, Decision{TrackID: tid, PID: pid, Action: Paused, Reason: "unknown track kind"})
 		}
 	}
 
-	return desc
+	return decs
 }
 
 // Diff converts desired decisions into subscription operations compared to current subscriptions.
@@ -176,13 +176,13 @@ func Diff(cur []*livekit.Subscription, decs []Decision) []Operations {
 			}
 
 			if !found {
-				// TODO change the quality layer and update if needed
-				ops = append(ops, &SubscribeOp{TrackID: d.TrackID, Action: d.Action, Reason: d.Reason})
+				// TODO: change the quality layer and update if needed
+				ops = append(ops, &SubscribeOp{TrackID: d.TrackID, PID: d.PID, Action: d.Action, Reason: d.Reason})
 			}
 		case Paused:
 			for _, s := range cur {
 				if s.TID == d.TrackID {
-					return []Operations{&UnsubscribeOp{TrackID: d.TrackID, Reason: d.Reason}}
+					ops = append(ops, &UnsubscribeOp{TrackID: d.TrackID, PID: d.PID, Reason: d.Reason})
 				}
 			}
 		}
@@ -195,7 +195,7 @@ func Diff(cur []*livekit.Subscription, decs []Decision) []Operations {
 	}
 	for _, s := range cur {
 		if _, ok := want[s.TID]; !ok {
-			ops = append(ops, &UnsubscribeOp{TrackID: s.TID, Reason: "not in decisions / participant left"})
+			ops = append(ops, &UnsubscribeOp{TrackID: s.TID, PID: s.PID, Reason: "not in decisions / participant left"})
 		}
 	}
 

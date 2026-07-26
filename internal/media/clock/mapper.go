@@ -1,3 +1,5 @@
+// Package clock maps RTP media timestamps to wall-clock time using RTCP Sender
+// Reports and per-stream clock state.
 package clock
 
 import (
@@ -20,8 +22,9 @@ type MapperState struct {
 	LastNTPOut       float64
 	Degraded         bool      // indicates if mapping is degraded, e.g., due to SR timeout
 	Discontinuity    bool      // indicates if last SR caused a discontinuity
-	Initialized      bool      // indicates if mapping has been initialized (at least one SR received)
+	HasSenderReport  bool      // indicates if mapping has been initialized (at least one SR received)
 	LastSRReceivedAt time.Time // timestamp of the last received SR
+	Clock            ClockState
 }
 
 type ClockMapperConfig struct {
@@ -87,7 +90,7 @@ func NewClockMapper(metrics *metrics.Metrics, logger logging.Logger, config *Clo
 // RTP timestamp past rollovers, refreshing the (base_rtp, base_ntp) anchor and
 // derived offset/clock-rate state, and resetting monotonic/drift guards when
 // the sender clock jumps so subsequent RTP→NTP conversions stay accurate.
-func (cm *ClockMapper) UpdateFromSR(ssrc uint32, rtpTs, ntpHigh, ntpLow uint32) error {
+func (cm *ClockMapper) UpdateFromSR(ssrc uint32, rtpTS, ntpHigh, ntpLow uint32) error {
 	cm.m.RLock()
 	sc, ok := cm.streamClocks[ssrc]
 	cm.m.RUnlock()
@@ -99,53 +102,31 @@ func (cm *ClockMapper) UpdateFromSR(ssrc uint32, rtpTs, ntpHigh, ntpLow uint32) 
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
-	ntpTsSeconds := float64(ntpHigh) + (float64(ntpLow) / float64(1<<32))
+	ntpTSSeconds := float64(ntpHigh) + (float64(ntpLow) / float64(1<<32))
 
 	// Out-of-order SR guard: compare by NTP
 	// TODO: This out-of-order SR guard skips any SR with an older NTP than baseNTP,
 	// even if its RTP timestamp differs. For now we assume reordering is rare and treat
 	// these as duplicates. In a future version, check both NTP and RTP equality to
 	// distinguish true duplicates from re-ordered or inconsistent SRs.
-	if ntpTsSeconds < sc.baseNTP-cm.cfg.Epsilon.Seconds() {
+	if ntpTSSeconds < sc.baseNTP-cm.cfg.Epsilon.Seconds() {
 		cm.logger.Debugf("ClockMapper: out-of-order SR (older NTP %f < %f) for SSRC=%d; ignoring",
-			ntpTsSeconds, sc.baseNTP, ssrc)
+			ntpTSSeconds, sc.baseNTP, ssrc)
 		return nil
 	}
 
-	extRtp := sc.wrapTracker.ExtendedRTP(rtpTs)
-	predicted := sc.baseNTP + sc.deltaSeconds(extRtp)
-	delta := ntpTsSeconds - predicted
-	discontinuity := math.Abs(delta) > cm.cfg.DiscontinuityThreshold.Seconds()
-
-	if discontinuity {
-		cm.logger.Debugf("ClockMapper: SR step change %.3f ms for SSRC=%08x; treating as discontinuity",
-			delta*1000.0, ssrc)
-
-		// Reset wrap baseline to new origin
-		sc.wrapTracker.wraps = 0
-		sc.wrapTracker.lastRTP = rtpTs
-		sc.baseRTP = uint64(rtpTs)
-		sc.baseNTP = ntpTsSeconds
-
-		// Monotonic guard reset
-		sc.lastNTPOutput = sc.baseNTP
-		sc.degraded = true
-		sc.discontinuity = true
-
-		// TODO: drift estimator reset
-		// TODO: signal downstream via channel (actual flush/keyframe is handled by pipeline)
-	} else {
-		// Update stream clock state
-		sc.baseNTP = ntpTsSeconds
-		sc.baseRTP = extRtp
-	}
-
-	now := time.Now()
-	sc.lastSRReceivedAt = now
-
-	if !discontinuity {
-		sc.degraded = false
-		sc.discontinuity = false
+	switch sc.state {
+	case Uninitialized:
+		cm.logger.Debugf("ClockMapper: anchoring clock for SSRC=%08x with first SR (RTP=%d, NTP=%.6f)", ssrc, rtpTS, ntpTSSeconds)
+		// anchor the first SR, establishing the initial RTP→NTP mapping, don't degrade or discontinue on first SR
+		sc.Anchor(rtpTS, ntpTSSeconds)
+	case Anchored:
+		cm.logger.Debugf("ClockMapper: locking clock for SSRC=%08x with second SR (RTP=%d, NTP=%.6f)", ssrc, rtpTS, ntpTSSeconds)
+		// lock the clock on the second SR, confirming stability of the mapping
+		sc.Lock()
+		fallthrough
+	default:
+		sc.Update(rtpTS, ntpTSSeconds, cm.cfg.DiscontinuityThreshold)
 	}
 
 	return nil
@@ -169,7 +150,7 @@ func (cm *ClockMapper) UpdateFromSR(ssrc uint32, rtpTs, ntpHigh, ntpLow uint32) 
 //   - Mapping uninitialized (no valid SR seen for SSRC).
 //   - TODO: Extrapolation required beyond the configured window (degraded), when
 //     clamping is not permitted by configuration.
-func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error) {
+func (cm *ClockMapper) RTPToNTP(ssrc, rtpTS uint32) (float64, MapperState, error) {
 	cm.m.RLock()
 	sc, ok := cm.streamClocks[ssrc]
 	cm.m.RUnlock()
@@ -185,9 +166,8 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 		return 0, MapperState{}, NoSenderReportError{SSRC: ssrc}
 	}
 
-	extRtp := sc.wrapTracker.ExtendedRTP(rtpTs)
 	// predicted NTP
-	ntp := sc.baseNTP + sc.deltaSeconds(extRtp)
+	ntp := sc.NtpTime(rtpTS)
 	srAge := time.Since(sc.lastSRReceivedAt)
 
 	state := MapperState{
@@ -198,7 +178,7 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 		ClockRate:        sc.clockRate,
 		LastNTPOut:       sc.lastNTPOutput,
 		LastSRReceivedAt: sc.lastSRReceivedAt,
-		Initialized:      true,
+		Clock:            sc.state,
 	}
 
 	// SR age check
@@ -255,9 +235,9 @@ func (cm *ClockMapper) RTPToNTP(ssrc, rtpTs uint32) (float64, MapperState, error
 	return ntp, state, nil
 }
 
-// Same as RTPToNTP but returns Unix time
-func (cm *ClockMapper) RTPToNTPTime(ssrc, rtpTs uint32) (time.Time, MapperState, error) {
-	ntpFloat, state, err := cm.RTPToNTP(ssrc, rtpTs)
+// RTPToNTPTime same as RTPToNTP but returns Unix time
+func (cm *ClockMapper) RTPToNTPTime(ssrc, rtpTS uint32) (time.Time, MapperState, error) {
+	ntpFloat, state, err := cm.RTPToNTP(ssrc, rtpTS)
 	if err != nil && ntpFloat == 0 {
 		return time.Time{}, state, err
 	}
@@ -273,20 +253,6 @@ func (cm *ClockMapper) RTPToNTPTime(ssrc, rtpTs uint32) (time.Time, MapperState,
 	nsec := frac * 1e9
 
 	return time.Unix(int64(sec), int64(math.Round(nsec))), state, err
-}
-
-func (cm *ClockMapper) HasSenderReport(ssrc uint32) bool {
-	cm.m.RLock()
-	sc, ok := cm.streamClocks[ssrc]
-	cm.m.RUnlock()
-
-	if !ok {
-		return false
-	}
-
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	return !sc.lastSRReceivedAt.IsZero()
 }
 
 // SetClockRate sets the clock rate for the given SSRC stream
@@ -334,8 +300,9 @@ func (cm *ClockMapper) State(ssrc uint32) MapperState {
 		LastNTPOut:       sc.lastNTPOutput,
 		Degraded:         sc.degraded,
 		Discontinuity:    sc.discontinuity,
-		Initialized:      init,
+		HasSenderReport:  init,
 		LastSRReceivedAt: sc.lastSRReceivedAt,
+		Clock:            sc.state,
 	}
 }
 
@@ -362,7 +329,8 @@ func (cm *ClockMapper) ForEach(f func(ssrc uint32, state MapperState) bool) {
 			Degraded:         sc.degraded,
 			Discontinuity:    sc.discontinuity,
 			LastSRReceivedAt: sc.lastSRReceivedAt,
-			Initialized:      !sc.lastSRReceivedAt.IsZero(),
+			HasSenderReport:  !sc.lastSRReceivedAt.IsZero(),
+			Clock:            sc.state,
 		}
 		sc.mu.Unlock()
 		states[ssrc] = state

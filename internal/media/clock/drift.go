@@ -6,15 +6,15 @@ import (
 	"time"
 
 	"github.com/ssemakov/lkmcu/internal/logging"
-	"github.com/ssemakov/lkmcu/internal/media"
+	"github.com/ssemakov/lkmcu/internal/media/common"
 	"github.com/ssemakov/lkmcu/internal/metrics"
 )
 
 type ssrcDrift struct {
-	samples   *media.RingBuffer[driftSample] // rolling window of recent drift samples
-	slopeEWMA float64                        // seconds error change per second (dimensionless)
-	lastObs   time.Time                      // last arrival time observed
-	lastErr   float64                        // last error observed (seconds)
+	samples   *common.RingBuffer[driftSample] // rolling window of recent drift samples
+	slopeEWMA float64                         // seconds error change per second (dimensionless)
+	lastObs   time.Time                       // last arrival time observed
+	lastErr   float64                         // last error observed (seconds)
 
 	// Sustained-state tracking
 	over6ppmSince  time.Time // time when drift exceeded 6ppm
@@ -121,7 +121,7 @@ func (d *Drift) Observe(ssrc uint32, expected, arrival time.Time) DriftAssessmen
 	sd, ok := d.dm[ssrc]
 	if !ok {
 		sd = &ssrcDrift{
-			samples: media.NewRingBuffer[driftSample](d.cfg.MaxSamples),
+			samples: common.NewRingBuffer[driftSample](d.cfg.MaxSamples),
 			cfg:     &d.cfg,
 		}
 		d.dm[ssrc] = sd

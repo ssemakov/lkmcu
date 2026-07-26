@@ -1,10 +1,12 @@
 package pipeline
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
-// Subscription policy, allows to include/exclude certain kinds of tracks
+// Policy allows to include/exclude certain kinds of tracks from a subscription
 // and limit the number of video decoders
-// Should be set by the outside configuration
 type Policy struct {
 	IncludeKinds     []TrackKind
 	ExcludeKinds     []TrackKind
@@ -49,19 +51,9 @@ func (p *Policy) IsIncluded(kind TrackKind) bool {
 	if len(p.IncludeKinds) == 0 {
 		return true
 	}
-	for _, k := range p.IncludeKinds {
-		if k == kind {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(p.IncludeKinds, kind)
 }
 
 func (p *Policy) IsExcluded(kind TrackKind) bool {
-	for _, k := range p.ExcludeKinds {
-		if k == kind {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(p.ExcludeKinds, kind)
 }

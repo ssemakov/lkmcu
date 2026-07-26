@@ -1,13 +1,20 @@
+// Package pipeline coordinates LiveKit room events, subscription policy, and
+// the layout view to drive per-track media pipelines. The Agent consumes
+// system events, maintains a room snapshot, and reconciles active track
+// pipelines against the current layout.
 package pipeline
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/ssemakov/lkmcu/internal/config"
 	"github.com/ssemakov/lkmcu/internal/layout"
 	lk "github.com/ssemakov/lkmcu/internal/livekit"
 	"github.com/ssemakov/lkmcu/internal/logging"
+	"github.com/ssemakov/lkmcu/internal/media/processor"
 )
 
 // AgentConfig collects dependencies and settings needed to start an Agent.
@@ -17,20 +24,15 @@ type AgentConfig struct {
 	Policy Policy
 }
 
-type lkClient interface {
-	JoinRoom(roomName, identity string) error
-	Close() error
-	Events() <-chan lk.Event
-	SubscriptionSnapshot() []*lk.Subscription
-}
-
 // Agent coordinates LiveKit events and layout updates to keep subscriptions in sync.
 type Agent struct {
 	cfg AgentConfig
-	lk  lkClient
+	lk  lk.Client
 
 	layoutView *layout.LayoutView // current layout view
 	roomSnap   *RoomSnapshot      // current room state
+
+	trackPipelineManager processor.TrackPipelineManager
 
 	evCh chan SystemEvent // internal events
 	tick *time.Ticker     // periodic safety reconciliation
@@ -42,8 +44,8 @@ func NewAgent(cfg AgentConfig, l *layout.LayoutView) *Agent {
 
 	return &Agent{
 		cfg:        cfg,
-		roomSnap:   NewRoomSnapshot(), // room snapshot is single-threaded, no locks
 		layoutView: l,
+		roomSnap:   NewRoomSnapshot(), // room snapshot is single-threaded, no locks
 		evCh:       make(chan SystemEvent, 64),
 	}
 }
@@ -55,12 +57,20 @@ func (a *Agent) OnLayoutStageUpdate(s *layout.Stage) {
 
 // Run connects to LiveKit and drives reconciliation until the context is cancelled.
 func (a *Agent) Run(ctx context.Context) error {
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	a.trackPipelineManager = processor.NewTrackPipelineManager(a.cfg.Logger, runCtx)
+
 	lg := a.cfg.Logger
 	lg.Infof("agent starting for room=%s identity=%s", a.cfg.Config.Room, a.cfg.Config.Identity)
 	lg.Infof("connecting to LiveKit at %s", a.cfg.Config.LivekitURL)
 
+	if a.lk == nil {
+		a.lk = lk.NewClient(a.cfg.Config.LivekitURL, a.cfg.Config.APIKey, a.cfg.Config.APISecret, nil)
+	}
+
 	// Join the livekit room
-	a.lk = lk.NewClient(a.cfg.Config.LivekitURL, a.cfg.Config.APIKey, a.cfg.Config.APISecret, nil)
 	if err := a.lk.JoinRoom(a.cfg.Config.Room, a.cfg.Config.Identity); err != nil {
 		lg.Fatalf("could not join room: %v", err)
 	} else {
@@ -78,7 +88,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.tick = time.NewTicker(5 * time.Second)
 	defer a.tick.Stop()
 
-	go a.consumeLiveKitEvents(ctx)
+	go a.consumeLiveKitEvents(runCtx, cancel)
 
 	// TODO initial room state fetch
 	// Get your own participant ID to be able to ignore your own events
@@ -86,110 +96,114 @@ func (a *Agent) Run(ctx context.Context) error {
 	// Main loop
 	for {
 		select {
-		case <-ctx.Done():
+		case <-runCtx.Done():
 			lg.Infof("agent stopping...")
 			time.Sleep(50 * time.Millisecond)
-			return ctx.Err()
+			return runCtx.Err()
 
 		case <-a.tick.C:
-			a.reconcileState(ctx)
+			a.reconcileState()
 
 		case ev := <-a.evCh:
 			lg.Infof("event: %v", logging.FormatValue(ev))
 			a.applyEvent(ev)
-			a.reconcileState(ctx)
+			a.reconcileState()
 		}
 	}
 }
 
 // consumeLiveKitEvents streams LiveKit events into the agent's event channel until cancellation.
-func (a *Agent) consumeLiveKitEvents(ctx context.Context) {
+func (a *Agent) consumeLiveKitEvents(ctx context.Context, cancel context.CancelFunc) {
 	lg := a.cfg.Logger
-	lg.Debugf("starting LiveKit event consumer")
+	var pending lk.Event
+
+	getNextEvent := func() (lk.Event, bool) {
+		var e lk.Event
+		if pending != nil {
+			e, pending = pending, nil
+		} else {
+			select {
+			case <-ctx.Done():
+				return nil, false
+			case ev, ok := <-a.lk.Events():
+				if !ok {
+					lg.Infof("LiveKit event channel closed")
+					return nil, false
+				}
+				e = ev
+			}
+		}
+		return e, true
+	}
+
+	for {
+		e, cont := getNextEvent()
+		if !cont {
+			return
+		}
+
+		switch evt := e.(type) {
+		case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished, lk.TrackSubscribed, lk.TrackUnsubscribed:
+			lg.Infof("LiveKit event: %s", logging.FormatValue(e))
+			roomEvt, nextPending := a.coalesceEvents(e)
+			pending = nextPending
+			a.evCh <- roomEvt
+		case lk.RoomDisconnected:
+			lg.Infof("Room disconnected, reason: %v", evt.Reason)
+			cancel()
+			return
+		case lk.RoomClosed:
+			lg.Infof("Room closed, stopping agent")
+			cancel()
+			return
+		default:
+			lg.Debugf("ignoring LiveKit event: %s", logging.FormatValue(evt))
+		}
+	}
+}
+
+// coalesceEvents accumulates related LiveKit events from the channel into a single RoomChangedEvent.
+func (a *Agent) coalesceEvents(initial lk.Event) (RoomChangedEvent, lk.Event) {
+	lg := a.cfg.Logger
+	roomEvt := RoomChangedEvent{LkEvents: []lk.Event{initial}}
+
 	for {
 		select {
-		case <-ctx.Done():
-			lg.Debugf("stopping LiveKit event consumer")
-			return
-		case e, ok := <-a.lk.Events():
+		case nextEvt, ok := <-a.lk.Events():
 			if !ok {
 				lg.Infof("LiveKit event channel closed")
-				return
+				return roomEvt, nil
 			}
-			switch evt := e.(type) {
+			switch nextEvt.(type) {
 			case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
-				lg.Infof("received LiveKit event: %s", logging.FormatValue(e))
-				a.evCh <- RoomChangedEvent{LkEvents: []lk.Event{e}}
-				// TODO coalesce multiple ParticipantJoined/Left, TrackPublished/Unpublished events into one RoomChangedEvent
-				// The idea is to pull as many events as possible from the channel without blocking
-				// and then push a single RoomChangedEvent to the event channel.
-				// This way we avoid excessive reconciliations when many participants join/leave or publish/unpublish tracks at once.
-				// Something like this:
-				// for {
-				// 	select {
-				// 	case e2 := <-a.lk.Events():
-				// 		switch e2.(type) {
-				// 		case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
-				// 			lg.Infof("coalescing LiveKit event: %s", logging.FormatValue(e2))
-				// 		default:
-				// 			// push back the event for later processing
-				// 			a.lk.PushBackEvent(e2)
-				// 			break
-				// 		}
-				// 	default:
-				// 		break
-				// 	}
-				// }
-			case lk.TrackSubscribed:
-				lg.Infof("TrackSubscribed: %s track %s kind %s", evt.Identity, evt.TID, evt.Kind)
-				// a.onStageTracks[evt.TID] = true // assume subscribed tracks are on stage
-			// todo ROOM_CLOSED
+				lg.Infof("coalescing LiveKit event: %s", logging.FormatValue(nextEvt))
+				roomEvt.LkEvents = append(roomEvt.LkEvents, nextEvt)
 			default:
-				lg.Debugf("ignoring LiveKit event: %s", logging.FormatValue(evt))
+				return roomEvt, nextEvt
 			}
 		default:
-			time.Sleep(100 * time.Millisecond)
+			return roomEvt, nil
 		}
 	}
 }
 
 // applyEvent updates the room snapshot or layout view based on incoming system events.
 func (a *Agent) applyEvent(ev SystemEvent) {
-	a.cfg.Logger.Debugf("applying event: %v", logging.FormatValue(ev))
+	a.cfg.Logger.Debugf("applyEvent %v", logging.FormatValue(ev))
 
-	switch sysE := ev.(type) {
+	switch systemEvt := ev.(type) {
 	case RoomChangedEvent:
 		// Update room snapshot based on the events
-		for _, lkEv := range sysE.LkEvents {
-			switch lkE := lkEv.(type) {
-			case lk.ParticipantJoined:
-				a.roomSnap.UpsertParticipant(lkE.PID, lkE.Identity)
-			case lk.ParticipantLeft:
-				a.roomSnap.DeleteParticipantAndTracks(lkE.PID)
-				// TODO also unsubscribe from all tracks of this participant w/o waiting for reconciliation
-				// a.roomSnap.RemoveSubsCache(tids)
-			case lk.TrackPublished:
-				_, err := a.roomSnap.UpsertTrack(lkE.PID, lkE.TID, TrackKind(lkE.Kind))
-				if err != nil {
-					a.cfg.Logger.Errorf("TrackPublished error: %v", err)
-					continue
-				}
-			case lk.TrackUnpublished:
-				err := a.roomSnap.DeleteTrack(lkE.PID, lkE.TID)
-				// a.roomSnap.RemoveSubsCache(lkE.TID)
-				if err != nil {
-					a.cfg.Logger.Errorf("TrackUnpublished error: %v", err)
-					continue
-				}
-			default:
-				a.cfg.Logger.Debugf("ignoring LiveKit event in RoomChangedEvent: %s", logging.FormatValue(lkE))
+		for _, evt := range systemEvt.LkEvents {
+			if err := a.applyLiveKitEvent(evt); err != nil {
+				a.cfg.Logger.Errorf("error applying LiveKit event %s: %v", logging.FormatValue(evt), err)
 			}
 		}
 	case LayoutChangedEvent:
-		// TODO consider coasting multiple LayoutChangedEvent into one
-		if sysE.Stage != nil {
+		// TODO: consider coalescing multiple LayoutChangedEvent into one
+		if systemEvt.Stage != nil {
 			// Update layout view atomically
-			a.layoutView.UpdateFromStage(sysE.Stage)
+			a.layoutView.UpdateFromStage(systemEvt.Stage)
 		}
 		a.cfg.Logger.Debugf("updated stage layout: %v", logging.FormatValue(a.layoutView.CurrentStage))
 	default:
@@ -197,32 +211,122 @@ func (a *Agent) applyEvent(ev SystemEvent) {
 	}
 }
 
+func (a *Agent) applyLiveKitEvent(ev lk.Event) error {
+	switch lkEvt := ev.(type) {
+	case lk.ParticipantJoined:
+		a.roomSnap.UpsertParticipant(lkEvt.PID, lkEvt.Identity)
+	case lk.ParticipantLeft:
+		if err := a.removeTrackPipelines(lkEvt.PID); err != nil {
+			return fmt.Errorf("participant left: remove track pipelines: %w", err)
+		}
+		tids := a.roomSnap.DeleteParticipantAndTracks(lkEvt.PID)
+		for _, tid := range tids {
+			a.roomSnap.RemoveSubCache(tid)
+		}
+	case lk.TrackPublished:
+		if _, err := a.roomSnap.UpsertTrack(lkEvt.PID, lkEvt.TID, TrackKind(lkEvt.Kind)); err != nil {
+			return fmt.Errorf("track published: upsert track %w", err)
+		}
+	case lk.TrackUnpublished:
+		if err := a.removeTrackPipeline(lkEvt.TID); err != nil {
+			return fmt.Errorf("track unsubscribed: remove track pipeline %s: %w", lkEvt.TID, err)
+		}
+
+		if err := a.roomSnap.DeleteTrack(lkEvt.PID, lkEvt.TID); err != nil {
+			return fmt.Errorf("track unpublished: delete track: %s", err)
+		}
+		a.roomSnap.RemoveSubCache(lkEvt.TID)
+	case lk.TrackSubscribed:
+		// TODO: properly convert to video-full, video-low, pause
+		a.roomSnap.UpsertSubCache(lkEvt.TID, DecisionAction(lkEvt.Kind))
+		// TODO: audio only for now, we can ignore video tracks until we implement video pipelines
+		if lkEvt.RemoteTrack.Kind() != "audio" {
+			a.cfg.Logger.Infof("track subscribed: currently only audio tracks are supported, ignoring track %s of kind %s",
+				lkEvt.TID, lkEvt.RemoteTrack.Kind())
+			return nil
+		}
+		// TODO: introduce retry policy and attempt on next reconcile cycle if we failed to crate pipeline.
+		// Look at what are the reasons for possible failure.
+		_, err := a.trackPipelineManager.NewTrackPipeline(lkEvt.TID, lkEvt.RemoteTrack, lkEvt.Receiver)
+		if err != nil {
+			return fmt.Errorf("track subscribed: cannot create track pipeline %s: %w", lkEvt.TID, err)
+		}
+	case lk.TrackUnsubscribed:
+		if err := a.removeTrackPipeline(lkEvt.TID); err != nil {
+			return fmt.Errorf("remove track pipeline %s: %w", lkEvt.TID, err)
+		}
+
+		a.roomSnap.RemoveSubCache(lkEvt.TID)
+	default:
+		a.cfg.Logger.Debugf("ignoring LiveKit event: %s", logging.FormatValue(lkEvt))
+	}
+
+	return nil
+}
+
 // reconcileState decides and logs the subscription operations required to match desired layout state.
-func (a *Agent) reconcileState(ctx context.Context) {
+func (a *Agent) reconcileState() {
 	// Decide changes based on the current layout and policy
 	a.cfg.Logger.Debugf("Reconciling state. Room snapshot: %v", logging.FormatValue(a.roomSnap))
 
 	// Take a snapshot of the layout to avoid holding locks during Decide
 	lSnap := a.layoutView.Snapshot()
 
-	// TODO we may want to add PartialDecide only for dirty set of PID, TID (ones that were added/removed/changed)
+	// TODO: we may want to add PartialDecide only for dirty set of PID, TID (ones that were added/removed/changed)
 	// This can be done after profiler says that Decide is a bottleneck
 	// or we can keep track of dirty PIDs/TIDs in the room snapshot and pass them to Decide
 	// For now we just call full Decide every time
-	// TODO cache decisions on the room snapshot
+	// TODO cache decisions in the room snapshot
 	decs := Decide(a.cfg.Policy, lSnap, a.roomSnap)
-	a.cfg.Logger.Infof("Decisions: %v", logging.FormatValue(decs))
+	if len(decs) != 0 {
+		a.cfg.Logger.Debugf("Decisions: %v", logging.FormatValue(decs))
+	}
 
 	// Compare with current subscriptions
-	// TODO cache for event reconciliation and get the full sanpshot on periodic reconciliation
-	cur := a.lk.SubscriptionSnapshot()
-	a.cfg.Logger.Infof("Current subscriptions: %v", logging.FormatValue(cur))
+	// TODO: cache for event reconciliation and get the full snapshot on periodic reconciliation
+	curLk := a.lk.SubscriptionSnapshot()
+	a.cfg.Logger.Debugf("Current LK subscriptions: %v", logging.FormatValue(curLk))
 
-	ops := Diff(cur, decs)
-	a.cfg.Logger.Infof("Operations: %v", logging.FormatValue(ops))
+	ops := Diff(curLk, decs)
+	if len(ops) != 0 {
+		a.cfg.Logger.Infof("Operations to apply: %v", logging.FormatValue(ops))
+	}
 
 	for _, op := range ops {
-		a.cfg.Logger.Infof("applying subscription change: %v", logging.FormatValue(op))
-		// TODO apply the change via LiveKit client
+		a.cfg.Logger.Infof("Applying subscription change: %v", logging.FormatValue(op))
+
+		if err := op.Exec(a.lk); err != nil {
+			a.cfg.Logger.Errorf("error applying subscription change: %v", err)
+		}
 	}
+}
+
+func (a *Agent) removeTrackPipelines(pid string) error {
+	tids, err := a.roomSnap.ParticipantTracks(pid)
+	if err != nil {
+		return err
+	}
+
+	for _, tid := range tids {
+		if err := a.removeTrackPipeline(tid); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (a *Agent) removeTrackPipeline(tid string) error {
+	err := a.trackPipelineManager.RemoveTrackPipeline(tid)
+
+	if errors.Is(err, processor.ErrPipeNotFound) {
+		a.cfg.Logger.Debugf("%v, TrackID: %s", err, tid)
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
