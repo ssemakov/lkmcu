@@ -117,47 +117,36 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context, cancel context.CancelF
 	lg := a.cfg.Logger
 	var pending lk.Event
 
-	for {
+	getNextEvent := func() (lk.Event, bool) {
 		var e lk.Event
 		if pending != nil {
 			e, pending = pending, nil
 		} else {
 			select {
 			case <-ctx.Done():
-				return
+				return nil, false
 			case ev, ok := <-a.lk.Events():
 				if !ok {
 					lg.Infof("LiveKit event channel closed")
-					return
+					return nil, false
 				}
 				e = ev
 			}
 		}
+		return e, true
+	}
+
+	for {
+		e, cont := getNextEvent()
+		if !cont {
+			return
+		}
+
 		switch evt := e.(type) {
 		case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished, lk.TrackSubscribed, lk.TrackUnsubscribed:
 			lg.Infof("LiveKit event: %s", logging.FormatValue(e))
-			roomEvt := RoomChangedEvent{LkEvents: []lk.Event{e}}
-		drain:
-			for {
-				select {
-				case nextEvt, ok := <-a.lk.Events():
-					if !ok {
-						lg.Infof("LiveKit event channel closed")
-						a.evCh <- roomEvt
-						return
-					}
-					switch nextEvt.(type) {
-					case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
-						lg.Infof("coalescing LiveKit event: %s", logging.FormatValue(nextEvt))
-						roomEvt.LkEvents = append(roomEvt.LkEvents, nextEvt)
-					default:
-						pending = nextEvt
-						break drain
-					}
-				default:
-					break drain
-				}
-			}
+			roomEvt, nextPending := a.coalesceEvents(e)
+			pending = nextPending
 			a.evCh <- roomEvt
 		case lk.RoomDisconnected:
 			lg.Infof("Room disconnected, reason: %v", evt.Reason)
@@ -169,6 +158,31 @@ func (a *Agent) consumeLiveKitEvents(ctx context.Context, cancel context.CancelF
 			return
 		default:
 			lg.Debugf("ignoring LiveKit event: %s", logging.FormatValue(evt))
+		}
+	}
+}
+
+// coalesceEvents accumulates related LiveKit events from the channel into a single RoomChangedEvent.
+func (a *Agent) coalesceEvents(initial lk.Event) (RoomChangedEvent, lk.Event) {
+	lg := a.cfg.Logger
+	roomEvt := RoomChangedEvent{LkEvents: []lk.Event{initial}}
+
+	for {
+		select {
+		case nextEvt, ok := <-a.lk.Events():
+			if !ok {
+				lg.Infof("LiveKit event channel closed")
+				return roomEvt, nil
+			}
+			switch nextEvt.(type) {
+			case lk.ParticipantJoined, lk.ParticipantLeft, lk.TrackPublished, lk.TrackUnpublished:
+				lg.Infof("coalescing LiveKit event: %s", logging.FormatValue(nextEvt))
+				roomEvt.LkEvents = append(roomEvt.LkEvents, nextEvt)
+			default:
+				return roomEvt, nextEvt
+			}
+		default:
+			return roomEvt, nil
 		}
 	}
 }
@@ -186,7 +200,7 @@ func (a *Agent) applyEvent(ev SystemEvent) {
 			}
 		}
 	case LayoutChangedEvent:
-		// TODO: consider coasting multiple LayoutChangedEvent into one
+		// TODO: consider coalescing multiple LayoutChangedEvent into one
 		if systemEvt.Stage != nil {
 			// Update layout view atomically
 			a.layoutView.UpdateFromStage(systemEvt.Stage)
