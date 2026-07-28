@@ -1,3 +1,9 @@
+> [!NOTE]
+> DISCLAIMER
+> 
+> This is a **work-in-progress** project that I'm tinkering with when I have time. **Do not expect this to work without issues or be fully functional.**
+> A lot of the code here is written by hand, but LLMs are used extensively to help me learn new concepts, find issues, test, and write documentation.  
+
 # LiveKit MCU Agent
 
 A minimal Go agent that joins a LiveKit room, subscribes to selected tracks, mixes audio/video, and publishes a composite track back to the room.
