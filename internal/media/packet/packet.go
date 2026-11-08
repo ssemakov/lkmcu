@@ -16,18 +16,19 @@ type PacketPayload []byte
 //   - Seq: RTP sequence number.
 //   - Payload: raw payload bytes.
 type Packet struct {
-	RtpTs   uint32
+	RTPTS   uint32
 	Seq     uint16
 	Payload PacketPayload
 }
 
+// FromRTP translates rtp.Packet to Packet
 // Payload must be read-only
 func FromRTP(src *rtp.Packet) (Packet, error) {
-	rtp_packet := Packet{
-		RtpTs:   src.Timestamp,
+	rtpPacket := Packet{
+		RTPTS:   src.Timestamp,
 		Seq:     src.SequenceNumber,
 		Payload: src.Payload,
 	}
 
-	return rtp_packet, nil
+	return rtpPacket, nil
 }
