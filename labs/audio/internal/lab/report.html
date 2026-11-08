@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio lab · {{.Experiment.Config.Signal}}</title>
+<style>
+:root{color-scheme:light;--bg:#f6f5f0;--paper:#fffefa;--ink:#242e32;--muted:#616b70;--line:#dcded5;--accent:#b3472e;--input:#356e85;--gained:#b3472e;--clipped:#6a7441}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1320px;margin:auto;padding:32px 36px 40px}a{color:var(--input);text-underline-offset:3px}button,input,select{font:inherit}input,select{accent-color:var(--accent)}:focus-visible{outline:3px solid #356e85;outline-offset:4px}header{display:flex;justify-content:space-between;gap:20px;border-bottom:1px solid var(--line);padding-bottom:17px}.brand{font-size:15px;letter-spacing:.04em;font-weight:700}.brand span{font-weight:400;color:var(--muted);margin-left:15px}.tag,.eyebrow{font-size:11px;letter-spacing:.13em;text-transform:uppercase;font-weight:700;color:var(--muted)}.tag{border:1px solid var(--line);border-radius:30px;padding:3px 12px;align-self:center}.hero{padding:30px 0 24px;display:flex;justify-content:space-between;align-items:end;gap:20px}h1{font-size:clamp(30px,4vw,46px);font-weight:550;line-height:1.15;letter-spacing:-.045em;margin:10px 0}h2{font-size:18px;letter-spacing:-.02em;margin:0}h3{font-size:14px;margin:0 0 8px}p{margin:8px 0}.muted{color:var(--muted)}.small{font-size:12px}.mono,code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.preset{display:flex;gap:20px;flex-wrap:wrap;border:1px solid var(--line);border-radius:10px;padding:14px 18px;font-size:12px;background:var(--paper)}.preset strong{display:block;font-size:17px;font-weight:550}.layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px;align-items:start}.card{border:1px solid var(--line);border-radius:12px;background:var(--paper);padding:22px;min-width:0}.card-top{display:flex;align-items:center;justify-content:space-between;gap:15px}.legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:15px;font-size:12px}.legend label{display:flex;align-items:center;gap:6px;cursor:pointer}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--input);margin-right:5px}.gained .dot{background:var(--gained)}.clipped .dot{background:var(--clipped)}#waveform{display:block;width:100%;height:310px;touch-action:pan-y;margin:10px 0 0}.controls{display:grid;grid-template-columns:1fr 1fr 120px;gap:20px;border-top:1px solid var(--line);padding-top:17px}.control label{display:block;font-size:11px;letter-spacing:.03em;margin-bottom:7px;color:var(--muted)}input[type=range]{width:100%;cursor:pointer}select{width:100%;border:1px solid var(--line);background:var(--paper);border-radius:5px;padding:5px;color:var(--ink)}.inspect{margin-top:17px;padding:12px 14px;background:var(--bg);border-radius:6px;display:flex;gap:16px;justify-content:space-between;flex-wrap:wrap;font-size:12px}#cursor{max-width:240px}.inspector-control{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-top:12px}.metric-stage+.metric-stage{border-top:1px solid var(--line);padding-top:18px;margin-top:18px}.metric-stage:first-of-type{margin-top:17px}.metric-row{display:flex;justify-content:space-between;gap:10px;margin:8px 0;font-size:12px}.metric-row strong{font-weight:550;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.state-pending,.state-error{color:var(--accent)}.metric-note{font-size:11px;color:var(--muted);margin-top:12px}details{font-size:11px;color:var(--muted);margin-top:7px}summary{cursor:pointer}.audio-panel{margin-top:20px}.audio-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;margin-top:18px}audio{width:100%;height:36px;margin-top:8px}.notice{padding:10px 13px;border-left:3px solid #b8bd9c;background:#f2f3e9;font-size:12px;margin-top:14px}.note{margin-top:20px;white-space:pre-wrap;overflow-wrap:anywhere}.note p{font-size:13px}.footer{display:flex;justify-content:space-between;gap:15px;margin-top:23px;color:var(--muted);font-size:12px}.footer span{overflow-wrap:anywhere}#sample-values{display:flex;gap:14px;flex-wrap:wrap}svg text{font:11px system-ui,sans-serif;fill:var(--muted)}noscript{display:block;padding:20px;background:#fff0d8}
+@media(max-width:950px){.layout{grid-template-columns:1fr}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:15px}.metrics>h2,.metrics>.muted,.metrics>.metric-note{grid-column:1/-1}.metric-stage+.metric-stage{border:0;margin:0;padding:0}.metric-stage:first-of-type{margin:0}.hero{align-items:start;flex-direction:column}.preset{width:100%;justify-content:space-between}}
+@media(max-width:560px){main{padding:20px 15px}.card{padding:16px}.brand span{display:block;margin:2px 0 0}.tag{font-size:9px}.controls{grid-template-columns:1fr 1fr;gap:12px}.control:last-child{grid-column:1/-1;max-width:150px}#waveform{height:240px}.footer{flex-direction:column}.card-top{align-items:start;flex-direction:column}.preset{gap:12px}.preset strong{font-size:15px}}
+@media print{body{background:white}main{max-width:none}.controls,.inspector-control,audio{display:none}.card{break-inside:avoid}}
+</style>
+</head>
+<body>
+<main>
+<header><div class="brand">audio / lab <span>A small space for PCM experiments</span></div><div class="tag">Phase 01 · PCM</div></header>
+<section class="hero">
+ <div><div class="eyebrow">Predict. Run. Inspect. Listen.</div><h1 id="experiment-title">Your {{.Experiment.Config.Signal}} experiment</h1><p class="muted" id="experiment-summary"></p></div>
+ <div class="preset"><div>Sample rate<strong>48 kHz</strong></div><div>Format<strong>Mono · float32</strong></div><div>Block<strong>960 samples · 20 ms</strong></div><div>Duration<strong>{{.Duration}}</strong></div></div>
+</section>
+<noscript>Enable JavaScript for waveform inspection. Metrics, audio players, and raw JSON remain available below.</noscript>
+<div class="layout">
+ <section class="card">
+  <div class="card-top"><h2>Look at the samples</h2><span class="small muted mono" id="window-label"></span></div>
+  <div class="legend" id="legend"></div>
+  <svg id="waveform" viewBox="0 0 1000 320" role="img" aria-label="Waveform of original Go samples; use the sample cursor slider to inspect values"></svg>
+  <div class="controls">
+   <div class="control"><label for="block">Block <span id="block-number"></span></label><input id="block" type="range" min="0" value="0" step="1"></div>
+   <div class="control"><label for="offset">First sample in view <span id="offset-number"></span></label><input id="offset" type="range" min="0" value="0" step="1"></div>
+   <div class="control"><label for="zoom">Window</label><select id="zoom"><option value="960">20 ms</option><option value="240">5 ms</option><option value="48">1 ms</option></select></div>
+  </div>
+  <div class="inspector-control"><label class="small muted" for="cursor">Inspect sample · hover the plot or move this slider</label><input id="cursor" type="range" min="0" max="959" value="0" step="1"></div>
+  <div class="inspect"><span class="mono" id="sample-position"></span><div class="mono" id="sample-values" aria-live="polite"></div></div>
+  <p class="small muted" style="margin-top:13px">Dashed lines mark nominal full scale (±1). Lines connect stored samples for inspection; they do not show analog reconstruction or true peaks.</p>
+ </section>
+ <aside class="card metrics">
+  <h2>Measure the signal</h2>
+  <p class="small muted">Entire {{.Duration}} signal · independent of chart zoom</p>
+  {{range .Experiment.Stages}}
+  <div class="metric-stage {{.ID}}">
+   <h3><span class="dot"></span>{{.Name}}</h3>
+   <div class="metric-row"><span>Sample peak</span><strong class="state-{{.Peak.State}}" title="{{.Peak.Detail}}">{{.Peak.Display}}</strong></div>
+   <div class="metric-row"><span>RMS · linear</span><strong class="state-{{.RMS.State}}" title="{{.RMS.Detail}}">{{.RMS.Display}}</strong></div>
+   <div class="metric-row"><span>Sample-peak dBFS</span><strong class="state-{{.PeakDBFS.State}}" title="{{.PeakDBFS.Detail}}">{{.PeakDBFS.Display}}</strong></div>
+   <div class="metric-row"><span>Samples outside ±1</span><strong>{{.OverRange}}</strong></div>
+   {{if ne .Peak.State "ready"}}<details><summary>Peak {{.Peak.State}}</summary>{{.Peak.Detail}}</details>{{end}}
+   {{if ne .RMS.State "ready"}}<details><summary>RMS {{.RMS.State}}</summary>{{.RMS.Detail}}</details>{{end}}
+   {{if ne .PeakDBFS.State "ready"}}<details><summary>dBFS {{.PeakDBFS.State}}</summary>{{.PeakDBFS.Detail}}</details>{{end}}
+  </div>
+  {{end}}
+  <p class="metric-note">Peak, RMS, and dBFS call your Go functions. Pending means unfinished. The runner counts over-range samples separately for inspection. Measurements are not a test pass; run <code>audiolab check</code> to check correctness.</p>
+ </aside>
+</div>
+<section class="card audio-panel">
+ <div class="card-top"><h2>Listen to the difference</h2><a class="small" href="data.json" download>Download original samples + measurements ↗</a></div>
+ <p class="small muted">One shared playback gain: <strong class="mono">{{printf "%.6g" .Experiment.PlaybackGain}} ({{.PlaybackDB}} dB)</strong>. Original amplitudes are preserved in the plot and JSON.</p>
+ <div class="audio-grid">{{range .Experiment.Stages}}<div class="{{.ID}}"><h3><span class="dot"></span>{{.Name}}</h3><audio controls preload="none" src="{{.WAV}}">Download the <a href="{{.WAV}}">listening copy</a>.</audio><a class="small" href="{{.WAV}}" download>Save WAV</a></div>{{end}}</div>
+ <div class="notice">WAVs are mono PCM16 listening copies with shared linear attenuation and quantization. They are not independently normalized. Only the explicit hard-clipped stage uses your HardClip function. A constant may sound like a click at its boundaries rather than a tone.</div>
+</section>
+{{if .Experiment.Config.Prediction}}<section class="card note"><div class="eyebrow">Your prediction</div><p>{{.Experiment.Config.Prediction}}</p></section>{{end}}
+{{if .Experiment.Config.Note}}<section class="card note"><div class="eyebrow">Your observation</div><p>{{.Experiment.Config.Note}}</p></section>{{end}}
+<footer class="footer"><span>Generated {{.Experiment.CreatedAt}} · Runs are snapshots. Rerun an experiment after editing Go.</span><span>Next: write one observation · <code>audiolab chat LESSON</code></span></footer>
+</main>
+<script id="experiment-data" type="application/json">{{.Data}}</script>
+<script>
+(() => {
+ "use strict";
+ const data = JSON.parse(document.getElementById("experiment-data").textContent);
+ const get = id => document.getElementById(id);
+ const svg = get("waveform"), NS = "http://www.w3.org/2000/svg";
+ const colors = {input:"#356e85", gained:"#b3472e", clipped:"#6a7441"};
+ const visible = new Set(data.stages.map(s => s.id));
+ const total = data.stages[0].samples.length;
+ let start = 0, span = 960, cursor = 0, plot = {};
+ const config = data.config;
+ const info = [config.signal];
+ if (config.signal === "sine") info.push(config.frequency_hz + " Hz");
+ if (config.signal !== "silence" && config.signal !== "sandbox") info.push("amplitude " + config.amplitude);
+ if (config.gain !== undefined) info.push("gain ×" + config.gain);
+ if (config.clip) info.push("explicit hard clip");
+ get("experiment-summary").textContent = info.join("  /  ");
+ get("block").max = String(total / data.block_samples - 1);
+ for (const stage of data.stages) {
+  const label = document.createElement("label");
+  const box = document.createElement("input"); box.type = "checkbox"; box.checked = true;
+  box.setAttribute("aria-label", "Show " + stage.name);
+  box.addEventListener("change", () => { if (box.checked) visible.add(stage.id); else visible.delete(stage.id); draw(); });
+  const dot = document.createElement("span"); dot.className = "dot"; dot.style.background = colors[stage.id];
+  label.append(box, dot, document.createTextNode(stage.name)); get("legend").append(label);
+ }
+ function node(tag, attrs, text) {
+  const el = document.createElementNS(NS, tag);
+  for (const [key,value] of Object.entries(attrs)) el.setAttribute(key, String(value));
+  if (text !== undefined) el.textContent = text;
+  return el;
+ }
+ function draw() {
+  span = Number(get("zoom").value);
+  start = Math.max(0, Math.min(start, total-span));
+  cursor = Math.max(start, Math.min(cursor, start+span-1));
+  get("offset").max = String(total-span); get("offset").value = String(start);
+  get("block").value = String(Math.floor(start/data.block_samples));
+  get("cursor").max = String(span-1); get("cursor").value = String(cursor-start);
+  get("block-number").textContent = Math.floor(start/data.block_samples) + " / " + (total/data.block_samples-1);
+  get("offset-number").textContent = String(start);
+  get("window-label").textContent = start + "–" + (start+span-1) + " · " + span + " samples";
+  svg.replaceChildren();
+  let magnitude = 1;
+  for (const stage of data.stages) if (visible.has(stage.id)) {
+   for (let i=start;i<start+span;i++) magnitude = Math.max(magnitude, Math.abs(stage.samples[i]));
+  }
+  const ceiling = magnitude*1.15;
+  const left=57, right=982, top=18, bottom=278;
+  const x = index => left+(index-start)/(span-1)*(right-left);
+  const y = value => bottom-(value+ceiling)/(ceiling*2)*(bottom-top);
+  plot = {left, right, x, y, top, bottom};
+  for (const level of [-1,0,1]) {
+   svg.append(node("line",{x1:left,x2:right,y1:y(level),y2:y(level),stroke:level===0?"#c1c6bf":"#ccb9af","stroke-dasharray":level===0?"0":"5 5"}));
+   svg.append(node("text",{x:left-12,y:y(level)+4,"text-anchor":"end"},level>0?"+1":String(level)));
+  }
+  for (let k=0;k<=4;k++) {
+   const index=start+Math.round((span-1)*k/4), xx=x(index);
+   svg.append(node("line",{x1:xx,x2:xx,y1:top,y2:bottom,stroke:"#ecece5"}));
+   svg.append(node("text",{x:xx,y:bottom+21,"text-anchor":"middle"},(index/data.sample_rate*1000).toFixed(2)));
+  }
+  svg.append(node("text",{x:right,y:317,"text-anchor":"end"},"milliseconds from start"));
+  svg.append(node("text",{x:left,y:10},"±" + ceiling.toPrecision(3) + " view range"));
+  for (const stage of data.stages) if (visible.has(stage.id)) {
+   let path="";
+   for (let i=start;i<start+span;i++) path += (i===start?"M":"L")+x(i).toFixed(2)+","+y(stage.samples[i]).toFixed(2);
+   svg.append(node("path",{d:path,fill:"none",stroke:colors[stage.id],"stroke-width":1.8,"vector-effect":"non-scaling-stroke",opacity:0.9}));
+   if (span<=128) for (let i=start;i<start+span;i++) svg.append(node("circle",{cx:x(i),cy:y(stage.samples[i]),r:2.3,fill:colors[stage.id]}));
+  }
+  svg.append(node("line",{id:"crosshair",x1:x(cursor),x2:x(cursor),y1:top,y2:bottom,stroke:"#566269","stroke-dasharray":"2 3"}));
+  inspect();
+ }
+ function inspect() {
+  get("sample-position").textContent = "n = " + cursor + " · " + (cursor/data.sample_rate*1000).toFixed(4) + " ms";
+  get("sample-values").replaceChildren();
+  for (const stage of data.stages) if (visible.has(stage.id)) {
+   const value = document.createElement("span"); value.style.color=colors[stage.id];
+   value.textContent = stage.name + ": " + stage.samples[cursor].toPrecision(6);
+   get("sample-values").append(value);
+  }
+  const line=get("crosshair"); line.setAttribute("x1",plot.x(cursor)); line.setAttribute("x2",plot.x(cursor));
+  get("cursor").value=String(cursor-start);
+ }
+ get("block").addEventListener("input",event => {start=Number(event.target.value)*data.block_samples;cursor=start;draw();});
+ get("offset").addEventListener("input",event => {start=Number(event.target.value);cursor=start;draw();});
+ get("zoom").addEventListener("change",draw);
+ get("cursor").addEventListener("input",event => {cursor=start+Number(event.target.value);inspect();});
+ svg.addEventListener("pointermove",event => {
+  const rect=svg.getBoundingClientRect();
+  // The SVG uses the default xMidYMid meet transform. Account for letterboxing.
+  const scale=Math.min(rect.width/1000,rect.height/320);
+  const pad=(rect.width-1000*scale)/2;
+  const px=(event.clientX-rect.left-pad)/scale;
+  cursor=start+Math.round(Math.max(0,Math.min(1,(px-plot.left)/(plot.right-plot.left)))*(span-1));inspect();
+ });
+ draw();
+})();
+</script>
+</body>
+</html>

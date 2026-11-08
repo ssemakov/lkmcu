@@ -1,0 +1,6 @@
+#!/bin/sh
+# Recompile through Go's build cache so experiments always use current edits.
+set -eu
+cd -- "$(dirname -- "$0")"
+go build -o bin/audiolab ./cmd/audiolab
+exec ./bin/audiolab "$@"
