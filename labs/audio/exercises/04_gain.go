@@ -1,10 +1,19 @@
 package exercises
 
+import "math"
+
 // ApplyGain returns a new slice with every sample multiplied by gain.
 // Preserve the input, including its backing storage. Negative gains are valid.
 // Do not clamp. Inputs and their products are finite and fit in float32.
 func ApplyGain(samples []float32, gain float64) []float32 {
-	panic(Unimplemented{Lesson: 4, Function: "ApplyGain"})
+	size := len(samples)
+	applied := make([]float32, 0, size)
+
+	for _, s := range samples {
+		applied = append(applied, s*float32(gain))
+	}
+
+	return applied
 }
 
 // AmplitudeDB expresses the magnitude of an amplitude relative to 1.0 in dB.
@@ -12,5 +21,5 @@ func ApplyGain(samples []float32, gain float64) []float32 {
 // Return negative infinity for zero. Inputs are finite.
 // Applied to a measured peak, this is sample-peak dBFS.
 func AmplitudeDB(amplitude float64) float64 {
-	panic(Unimplemented{Lesson: 4, Function: "AmplitudeDB"})
+	return 20 * math.Log10(math.Abs(amplitude)/1.0)
 }
