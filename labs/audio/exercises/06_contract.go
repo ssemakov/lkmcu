@@ -18,5 +18,14 @@ type PCMFormat struct {
 // Use "mono" for Layout and "float32" for SampleType. Also write the prose
 // contract in notes/06-pcm-contract.md, including where range management belongs.
 func MixerFormat() PCMFormat {
-	panic(Unimplemented{Lesson: 6, Function: "MixerFormat"})
+	return PCMFormat{
+		SampleRate:        48000,
+		Channels:          1,
+		Layout:            "mono",
+		SampleType:        "float32",
+		BlockDuration:     20 * time.Millisecond,
+		SamplesPerChannel: 960,
+		AllowOverRange:    true,
+		AllowNonFinite:    false,
+	}
 }
